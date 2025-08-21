@@ -1,14 +1,15 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
 import math
-import os
+import traceback
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
+import time
 
 import numpy as np
 import wgpu
 from PIL import Image
-from wgpu.gui.auto import WgpuCanvas, select_backend
+from wgpu.gui.auto import select_backend
 
 HexLike = Union[str, int]
 RGB = Tuple[int, int, int]
@@ -193,7 +194,9 @@ class GraphicsContext:
 
         # Batch system
         self.sprite_batch = SpriteBatch(self.device)
-        self.shape_batch = ShapeBatch(self.device)
+        self.shape_batch = ShapeBatch(
+            self.device, self.surface_format, self.width, self.height
+        )
 
     def begin_frame(self, clear_color: Color = Color(0, 0, 0, 255)):
         """Start a new frame"""
@@ -218,9 +221,9 @@ class GraphicsContext:
     def end_frame(self):
         """Finish and display the frame"""
         if self.render_pass:
-            # Flush all batches (TODO: implement batch system)
-            # self.sprite_batch.flush(self.render_pass)
-            # self.shape_batch.flush(self.render_pass)
+            # Flush all batches
+            self.sprite_batch.flush(self.render_pass)
+            self.shape_batch.flush(self.render_pass)
 
             self.render_pass.end()
             self.render_pass = None
@@ -230,13 +233,25 @@ class GraphicsContext:
             self.device.queue.submit([command_buffer])
             self.encoder = None
 
-        self.context.present()
+        try:
+            self.context.present()
+        except Exception:
+            pass
 
     def is_closed(self) -> bool:
         return self.canvas.is_closed()
 
     def cleanup(self):
-        self.canvas.close()
+        """Cleanup resources"""
+        if self.render_pass:
+            self.render_pass.end()
+            self.render_pass = None
+
+        if self.encoder:
+            self.encoder = None
+
+        if hasattr(self, "canvas") and self.canvas:
+            self.canvas.close()
 
 
 class Texture:
@@ -331,10 +346,12 @@ class SpriteBatch:
 class ShapeBatch:
     """Shape drawing system"""
 
-    def __init__(self, device: wgpu.GPUDevice):
+    def __init__(self, device: wgpu.GPUDevice, surface_format, width: int, height: int):
         self.device = device
         self.vertices = []
         self.indices = []
+        self.line_vertices = []
+        self.line_indices = []
 
     def add_rectangle(self, rect: Rect, color: Color, filled: bool = True):
         """Add a rectangle to the batch"""
@@ -345,17 +362,10 @@ class ShapeBatch:
 
             self.vertices.extend(
                 [
-                    [rect.x, rect.y, color.r, color.g, color.b, color.a],
-                    [rect.x + rect.width, rect.y, color.r, color.g, color.b, color.a],
-                    [
-                        rect.x + rect.width,
-                        rect.y + rect.height,
-                        color.r,
-                        color.g,
-                        color.b,
-                        color.a,
-                    ],
-                    [rect.x, rect.y + rect.height, color.r, color.g, color.b, color.a],
+                    [rect.x, rect.y, *color.as_normalized()],
+                    [rect.x + rect.width, rect.y, *color.as_normalized()],
+                    [rect.x + rect.width, rect.y + rect.height, *color.as_normalized()],
+                    [rect.x, rect.y + rect.height, *color.as_normalized()],
                 ]
             )
 
@@ -371,8 +381,26 @@ class ShapeBatch:
                 ]
             )
         else:
-            # TODO: line drawing
-            pass
+            # Add vertices for rectangle outline
+            base_idx = len(self.line_vertices)
+            self.line_vertices.extend(
+                [
+                    [rect.x, rect.y, *color.as_normalized()],
+                    [rect.x + rect.width, rect.y, *color.as_normalized()],
+                    [rect.x + rect.width, rect.y + rect.height, *color.as_normalized()],
+                    [rect.x, rect.y + rect.height, *color.as_normalized()],
+                ]
+            )
+
+            # Add indices for line loop
+            self.line_indices.extend(
+                [
+                    base_idx, base_idx + 1,
+                    base_idx + 1, base_idx + 2,
+                    base_idx + 2, base_idx + 3,
+                    base_idx + 3, base_idx
+                ]
+            )
 
     def add_circle(self, circle: Circle, color: Color, segments: int = 32):
         base_idx = len(self.vertices)
@@ -381,14 +409,14 @@ class ShapeBatch:
         radius = circle.radius
 
         # Add center vertex
-        self.vertices.append([center.x, center.y, color.r, color.g, color.b, color.a])
+        self.vertices.append([center.x, center.y, *color.as_normalized()])
 
         # Add perimeter vertices
         for i in range(segments):
             angle = 2 * math.pi * i / segments
             x = center.x + radius * math.cos(angle)
             y = center.y + radius * math.sin(angle)
-            self.vertices.append([x, y, color.r, color.g, color.b, color.a])
+            self.vertices.append([x, y, *color.as_normalized()])
 
         # Add triangles from center to perimeter
         for i in range(segments):
@@ -397,13 +425,15 @@ class ShapeBatch:
 
     def flush(self, render_pass=None):
         """Render all batched shapes"""
-        if not self.vertices or not render_pass:
+        if not render_pass:
             return
 
         # TODO: upload vertices/indices to GPU and draw
 
         self.vertices.clear()
         self.indices.clear()
+        self.line_vertices.clear()
+        self.line_indices.clear()
 
 
 class Graphics:
@@ -412,6 +442,16 @@ class Graphics:
     def __init__(self, width: int = 800, height: int = 600, title: str = "Graphics"):
         self.context = GraphicsContext(width, height, title)
         self.textures = {}  # Texture cache
+        self.last_frame = time.perf_counter()
+
+    def tick(self, fps: int):
+        if fps > 0:
+            now = time.perf_counter()
+            elapsed = now - self.last_frame
+            delay = max(0, (1.0 / fps) - elapsed)
+            if delay > 0:
+                time.sleep(delay)
+            self.last_frame = time.perf_counter()
 
     def load_texture(self, path: str, name: Optional[str] = None) -> Texture:
         if name is None:
@@ -449,6 +489,7 @@ class Graphics:
 
     def display(self):
         """Display the frame (call once per frame)"""
+        self.last_frame = time.perf_counter()
         self.context.end_frame()
 
     def begin_frame(self):
@@ -470,25 +511,39 @@ def main():
 
     # Initialize graphics
     gfx = Graphics(800, 600, "My Game")
+    frame_count = 0
 
-    while not gfx.is_closed():
-        gfx.begin_frame()
-        gfx.clear(Color.from_hex("#1a1a2e"))  # Dark blue background
+    try:
+        while not gfx.is_closed():
+            frame_count += 1
 
-        # Draw some shapes
-        gfx.draw_rect(
-            Rect(100, 100, 200, 150), Color.from_hex("#e94560")
-        )  # Red rectangle
-        gfx.draw_circle(
-            Circle(Vec2(400, 300), 50), Color.from_hex("#0f3460")
-        )  # Blue circle
+            gfx.begin_frame()
+            gfx.clear(Color.from_hex("#1a1a2e"))  # Dark blue background
 
-        # Draw sprites
-        # gfx.draw_sprite("player", Vec2(350, 250))
+            # Draw some shapes
+            gfx.draw_rect(
+                Rect(100, 100, 200, 150), Color.from_hex("#e94560")
+            )  # Red rectangle
+            gfx.draw_circle(
+                Circle(Vec2(400, 300), 50), Color.from_hex("#0f3460")
+            )  # Blue circle
 
-        gfx.display()
+            # Draw outline rectangle
+            gfx.draw_rect(
+                Rect(350, 100, 150, 100), Color.from_hex("#ffffff"), filled=False
+            )
 
-    gfx.cleanup()
+            gfx.tick(1)
+            gfx.display()
+            print(f"Frame {frame_count} rendered")
+
+    except Exception as e: # pylint: disable=broad-exception-caught
+        print(f"Error during rendering: {e}")
+        traceback.print_exc()
+    finally:
+        print("Cleaning up...")
+        gfx.cleanup()
+        print("Cleanup completed")
 
 
 if __name__ == "__main__":
