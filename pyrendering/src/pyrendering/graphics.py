@@ -8,7 +8,7 @@ import moderngl
 import numpy as np
 
 from pyrendering.color import Color
-from pyrendering.shapes import Shape, Circle, Rect
+from pyrendering.shapes import Circle, Rect, RoundedRect, Shape, Triangle
 
 NUM_VERTICES = 10000
 
@@ -76,9 +76,9 @@ class GraphicsContext:
 #version 330
 
 in vec2 in_vert;
-in vec3 in_color;
+in vec4 in_color;
 
-out vec3 v_color;
+out vec4 v_color;
 
 uniform vec2 u_resolution;
 
@@ -94,11 +94,11 @@ void main() {
             fragment_shader="""
 #version 330
 
-in vec3 v_color;
+in vec4 v_color;
 out vec4 fragColor;
 
 void main() {
-    fragColor = vec4(v_color, 1.0);
+    fragColor = v_color;
 }
 """,
         )
@@ -109,21 +109,39 @@ void main() {
 
         # Create vertex buffer for batched rendering
         self.vertex_buffer = self.ctx.buffer(
-            reserve=NUM_VERTICES * 5 * 4
-        )  # 5 floats per vertex, 4 bytes each
+            reserve=NUM_VERTICES * 6 * 4
+        )  # 6 floats per vertex, 4 bytes each
 
-        # Create vertex array object
-        self.vao = self.ctx.vertex_array(
-            self.program, [(self.vertex_buffer, "2f 3f", "in_vert", "in_color")]
+        # Create index buffer for indexed rendering
+        self.index_buffer_gl = self.ctx.buffer(
+            reserve=NUM_VERTICES * 6 * 4  # Reserve space for indices
         )
 
-        # Vertex data for current frame
-        self.draw_mode = DrawMode.TRIANGLE
+        # Create vertex array objects for both indexed and non-indexed rendering
+        self.vao_indexed = self.ctx.vertex_array(
+            self.program,
+            [(self.vertex_buffer, "2f 4f", "in_vert", "in_color")],
+            self.index_buffer_gl,
+        )
 
+        self.vao_simple = self.ctx.vertex_array(
+            self.program, [(self.vertex_buffer, "2f 4f", "in_vert", "in_color")]
+        )
+
+        # Batching data structures
         self.triangle_vertices = np.empty(
-            (0, 5), dtype=np.float32
-        )  # 5 floats per vertex
-        self.line_vertices = np.empty((0, 5), dtype=np.float32)  # 5 floats per vertex
+            (0, 6), dtype=np.float32
+        )  # Non-indexed triangles
+        self.line_vertices = np.empty((0, 6), dtype=np.float32)  # Non-indexed lines
+
+        # Indexed rendering data structures
+        self.indexed_vertices = np.empty(
+            (0, 6), dtype=np.float32
+        )  # Vertices for indexed rendering
+        self.triangle_indices = np.empty(0, dtype=np.uint32)  # Triangle indices
+        self.line_indices = np.empty(0, dtype=np.uint32)  # Line indices
+
+        self.vertex_count = 0  # Track current vertex count for indexing
 
         # Create framebuffer for offscreen rendering if needed
         if standalone:
@@ -150,125 +168,149 @@ void main() {
             return self.mode.size.width, self.mode.size.height, self.mode.refresh_rate
         return 0, 0, 0
 
-    def add_vertex(self, x: float, y: float, color: Color):
-        """Add a vertex to the batch"""
-        r, g, b = color.as_rgb_normalized()
-        vertex = np.array([x, y, r, g, b], dtype=np.float32)
-        if self.draw_mode == DrawMode.TRIANGLE:
+    def add_vertex_simple(self, x: float, y: float, color: Color, draw_mode: int):
+        """Add a vertex to simple (non-indexed) rendering"""
+        r, g, b, a = color.as_normalized()
+        vertex = np.array([x, y, r, g, b, a], dtype=np.float32)
+
+        if draw_mode == DrawMode.TRIANGLE:
             self.triangle_vertices = np.append(self.triangle_vertices, [vertex], axis=0)
-        elif self.draw_mode == DrawMode.LINE:
+        elif draw_mode == DrawMode.LINE:
             self.line_vertices = np.append(self.line_vertices, [vertex], axis=0)
 
+    def add_indexed_vertex(self, x: float, y: float, color: Color) -> int:
+        """Add a vertex for indexed rendering and return its index"""
+        r, g, b, a = color.as_normalized()
+        vertex = np.array([x, y, r, g, b, a], dtype=np.float32)
+
+        self.indexed_vertices = np.append(self.indexed_vertices, [vertex], axis=0)
+        current_index = self.vertex_count
+        self.vertex_count += 1
+        return current_index
+
+    def add_triangle_indices(self, indices: np.ndarray):
+        """Add triangle indices for indexed rendering"""
+        self.triangle_indices = np.append(
+            self.triangle_indices, indices.astype(np.uint32)
+        )
+
+    def add_line_indices(self, indices: np.ndarray):
+        """Add line indices for indexed rendering"""
+        self.line_indices = np.append(self.line_indices, indices.astype(np.uint32))
+
+    def draw_triangle(self, triangle: Triangle):
+        """Draw a triangle using simple rendering"""
+        p1, p2, p3 = triangle.p1, triangle.p2, triangle.p3
+        color = triangle.color
+
+        self.add_vertex_simple(p1.x, p1.y, color, DrawMode.TRIANGLE)
+        self.add_vertex_simple(p2.x, p2.y, color, DrawMode.TRIANGLE)
+        self.add_vertex_simple(p3.x, p3.y, color, DrawMode.TRIANGLE)
+
     def draw_rect(self, rect: Rect):
-        """Draw a rectangle"""
+        """Draw a rectangle using efficient indexed rendering"""
         x, y = rect.x, rect.y
         width, height = rect.width, rect.height
         color = rect.color
 
+        # Add the 4 vertices for the rectangle
+        v0 = self.add_indexed_vertex(x, y, color)
+        v1 = self.add_indexed_vertex(x + width, y, color)
+        v2 = self.add_indexed_vertex(x + width, y + height, color)
+        v3 = self.add_indexed_vertex(x, y + height, color)
+
         if rect.filled:
-            # Add vertices for filled rectangle (2 triangles)
-            self.draw_mode = DrawMode.TRIANGLE
-
-            # Triangle 1
-            self.add_vertex(x, y, color)
-            self.add_vertex(x + width, y, color)
-            self.add_vertex(x, y + height, color)
-
-            # Triangle 2
-            self.add_vertex(x + width, y, color)
-            self.add_vertex(x + width, y + height, color)
-            self.add_vertex(x, y + height, color)
+            # Two triangles for filled rectangle: (v0,v1,v3) and (v1,v2,v3)
+            triangle_indices = np.array([v0, v1, v3, v1, v2, v3], dtype=np.uint32)
+            self.add_triangle_indices(triangle_indices)
         else:
-            # Add vertices for rectangle outline (lines)
-            self.draw_mode = DrawMode.LINE
+            # Four lines for rectangle outline: v0->v1, v1->v2, v2->v3, v3->v0
+            line_indices = np.array([v0, v1, v1, v2, v2, v3, v3, v0], dtype=np.uint32)
+            self.add_line_indices(line_indices)
 
-            # Top line
-            self.add_vertex(x, y, color)
-            self.add_vertex(x + width, y, color)
-
-            # Right line
-            self.add_vertex(x + width, y, color)
-            self.add_vertex(x + width, y + height, color)
-
-            # Bottom line
-            self.add_vertex(x + width, y + height, color)
-            self.add_vertex(x, y + height, color)
-
-            # Left line
-            self.add_vertex(x, y + height, color)
-            self.add_vertex(x, y, color)
+    def draw_rounded_rect(self, rounded_rect: RoundedRect):
+        """Draw a rounded rectangle"""
+        # TODO: Implement rounded rectangle drawing
+        pass
 
     def draw_circle(self, circle: Circle):
-        """Draw a circle"""
+        """Draw a circle using simple rendering (could be optimized with indexed rendering later)"""
         center = circle.center.data
         radius = circle.radius
         color = circle.color
         segments = circle.segments
 
-        self.draw_mode = DrawMode.TRIANGLE
-
         # Generate angles for the circle
         angles = np.linspace(0, 2 * np.pi, segments, endpoint=False)
         offsets = np.stack((np.cos(angles), np.sin(angles)), axis=1) * radius
 
-        # Create vertices for the circle
-        center_vertex = np.array(
-            [*center, *color.as_rgb_normalized()], dtype=np.float32
-        )
-        vertices = np.empty((0, 5), dtype=np.float32)
-
+        # Create vertices for the circle using triangle fan approach
         for i in range(segments):
             v1 = center + offsets[i]
             v2 = center + offsets[(i + 1) % segments]
-            triangle = np.array(
-                [
-                    center_vertex,
-                    [*v1, *color.as_rgb_normalized()],
-                    [*v2, *color.as_rgb_normalized()],
-                ],
-                dtype=np.float32,
-            )
-            vertices = np.append(vertices, triangle, axis=0)
 
-        self.triangle_vertices = np.append(self.triangle_vertices, vertices, axis=0)
+            # Add triangle: center -> v1 -> v2
+            self.add_vertex_simple(center[0], center[1], color, DrawMode.TRIANGLE)
+            self.add_vertex_simple(v1[0], v1[1], color, DrawMode.TRIANGLE)
+            self.add_vertex_simple(v2[0], v2[1], color, DrawMode.TRIANGLE)
 
     def begin_frame(self):
         """Begin a new frame"""
+        # Clear all vertex data
         self.triangle_vertices = self.triangle_vertices[:0]
         self.line_vertices = self.line_vertices[:0]
+        self.indexed_vertices = self.indexed_vertices[:0]
+        self.triangle_indices = self.triangle_indices[:0]
+        self.line_indices = self.line_indices[:0]
+        self.vertex_count = 0
+
         if self.fbo:
             self.fbo.use()
 
     def flush(self):
         """Render all batched geometry"""
-        if self.triangle_vertices.size == 0 and self.line_vertices.size == 0:
-            return
+        # Render indexed geometry first (rectangles)
+        if self.indexed_vertices.size > 0:
+            # Upload vertex data
+            self.vertex_buffer.write(self.indexed_vertices.tobytes())
 
-        # Upload triangle vertices to GPU
-        if self.triangle_vertices.size > 0:
-            self.vertex_buffer.write(self.triangle_vertices.tobytes())
+            # Render triangles with indices
+            if self.triangle_indices.size > 0:
+                self.index_buffer_gl.write(self.triangle_indices.tobytes())
+                self.vao_indexed.render(
+                    moderngl.TRIANGLES, vertices=len(self.indexed_vertices), instances=1 # pylint: disable=no-member
+                )  # pylint: disable=no-member
 
-            # Calculate the number of triangle vertices
-            triangle_num_vertices = len(self.triangle_vertices)
+            # Render lines with indices
+            if self.line_indices.size > 0:
+                self.index_buffer_gl.write(self.line_indices.tobytes())
+                self.vao_indexed.render(
+                    moderngl.LINES, vertices=len(self.indexed_vertices), instances=1 # pylint: disable=no-member
+                )  # pylint: disable=no-member
+
+        # Render simple geometry (triangles and lines without indices)
+        total_simple_vertices = len(self.triangle_vertices) + len(self.line_vertices)
+        if total_simple_vertices > 0:
+            # Combine all simple vertices
+            all_simple_vertices = np.concatenate(
+                [self.triangle_vertices, self.line_vertices]
+            )
+            self.vertex_buffer.write(all_simple_vertices.tobytes())
 
             # Render triangles
-            if triangle_num_vertices >= 3:  # At least 3 vertices, render as triangles
-                self.vao.render(moderngl.TRIANGLES, vertices=triangle_num_vertices)  # pylint: disable=no-member
-
-        # Upload line vertices to GPU
-        if self.line_vertices.size > 0:
-            self.vertex_buffer.write(self.line_vertices.tobytes())
-
-            # Calculate the number of line vertices
-            line_num_vertices = len(self.line_vertices)
+            if len(self.triangle_vertices) > 0:
+                triangle_count = len(self.triangle_vertices)
+                self.vao_simple.render(
+                    moderngl.TRIANGLES, vertices=triangle_count, first=0 # pylint: disable=no-member
+                )  # pylint: disable=no-member
 
             # Render lines
-            if line_num_vertices >= 2:
-                self.vao.render(moderngl.LINES, vertices=line_num_vertices)  # pylint: disable=no-member
-
-        # Clear vertex buffers for next frame
-        self.triangle_vertices = self.triangle_vertices[:0]
-        self.line_vertices = self.line_vertices[:0]
+            if len(self.line_vertices) > 0:
+                line_count = len(self.line_vertices)
+                line_start = len(self.triangle_vertices)
+                self.vao_simple.render(
+                    moderngl.LINES, vertices=line_count, first=line_start # pylint: disable=no-member
+                )  # pylint: disable=no-member
 
     def display(self):
         """Present the rendered frame"""
@@ -313,8 +355,12 @@ void main() {
         """Clean up resources"""
         if hasattr(self, "vertex_buffer"):
             self.vertex_buffer.release()
-        if hasattr(self, "vao"):
-            self.vao.release()
+        if hasattr(self, "index_buffer_gl"):
+            self.index_buffer_gl.release()
+        if hasattr(self, "vao_indexed"):
+            self.vao_indexed.release()
+        if hasattr(self, "vao_simple"):
+            self.vao_simple.release()
         if hasattr(self, "program"):
             self.program.release()
         if hasattr(self, "fbo") and self.fbo:
@@ -361,7 +407,11 @@ class Graphics:
 
     def draw(self, shape: Shape):
         """Draw a shape"""
-        if isinstance(shape, Rect):
+        if isinstance(shape, Triangle):
+            self.graphics_context.draw_triangle(shape)
+        elif isinstance(shape, RoundedRect):
+            self.graphics_context.draw_rounded_rect(shape)
+        elif isinstance(shape, Rect):
             self.graphics_context.draw_rect(shape)
         elif isinstance(shape, Circle):
             self.graphics_context.draw_circle(shape)

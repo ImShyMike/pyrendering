@@ -2,7 +2,7 @@
 
 import traceback
 
-from pyrendering import Circle, Color, Graphics, Rect, Vec2
+from pyrendering import Circle, Color, Graphics, Rect, RoundedRect, Triangle, Vec2
 
 
 def main():
@@ -36,6 +36,19 @@ def main():
 
             # Draw outline rectangle
             gfx.draw(Rect(350, 100, 150, 100, Color.from_hex("#ffffff"), False))
+
+            # Draw a semi-transparent triangle
+            gfx.draw(
+                Triangle(
+                    Vec2(400, 400),
+                    Vec2(500, 300),
+                    Vec2(300, 300),
+                    Color.from_hex8("#00ff0077"),
+                )
+            )
+
+            # Draw a rounded rectangle
+            gfx.draw(RoundedRect(550, 100, 200, 100, radius=20, color=Color.from_hex("#ff9900")))
 
             gfx.display()
 
