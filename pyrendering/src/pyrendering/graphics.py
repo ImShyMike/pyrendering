@@ -60,12 +60,18 @@ class GraphicsContext:
             self.monitor = glfw.get_primary_monitor()
             self.mode = glfw.get_video_mode(self.monitor)
 
+            # Enable multisampling
+            glfw.window_hint(glfw.SAMPLES, 4)  # Request 4x multisampling
+
             # Create ModernGL context from current OpenGL context
             self.ctx = moderngl.create_context()
 
         # Enable blending for transparency
         self.ctx.enable(moderngl.BLEND)  # pylint: disable=no-member
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA  # pylint: disable=no-member
+
+        # Enable multisampling in the OpenGL context
+        self.ctx.enable_direct(0x809D) # GL_MULTISAMPLE
 
         # Set the viewport
         self.ctx.viewport = (0, 0, width, height)
