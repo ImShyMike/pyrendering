@@ -278,7 +278,7 @@ void main() {
             glfw.swap_buffers(self.window)
 
     def tick(self, target_fps: float = 0) -> float:
-        """Cap frame rate and return delta time in seconds."""
+        """Cap frame rate and return delta time in seconds"""
         now = time.time()
         elapsed = now - self.last_time
         target_frame_time = 1.0 / target_fps if target_fps > 0 else 0.0
@@ -288,6 +288,13 @@ void main() {
             now = time.time()
             elapsed = now - self.last_time
 
+        self.last_time = now
+        return elapsed
+
+    def vsync_tick(self) -> float:
+        """Update timing with vsync enabled"""
+        now = time.time()
+        elapsed = now - self.last_time
         self.last_time = now
         return elapsed
 
@@ -366,8 +373,12 @@ class Graphics:
         self.graphics_context.display()
 
     def tick(self, target_fps: float) -> float:
-        """Update timing"""
+        """Cap frame rate and return delta time in seconds"""
         return self.graphics_context.tick(target_fps)
+
+    def vsync_tick(self) -> float:
+        """Return delta time without a frame cap"""
+        return self.graphics_context.vsync_tick()
 
     def cleanup(self):
         """Clean up resources"""
