@@ -1,21 +1,22 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
 import math
+import time
 import traceback
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union
-import time
+from typing import Tuple, Union, cast
 
+import glfw
+import moderngl
 import numpy as np
-import wgpu
-from PIL import Image
-from wgpu.gui.auto import select_backend
 
 HexLike = Union[str, int]
 RGB = Tuple[int, int, int]
 RGBA = Tuple[int, int, int, int]
 NormalRGB = Tuple[float, float, float]
 NormalRGBA = Tuple[float, float, float, float]
+
+NUM_VERTICES = 10000
 
 
 @dataclass
@@ -169,355 +170,323 @@ class Circle:
 class GraphicsContext:
     """Graphics context handler"""
 
-    def __init__(self, width: int, height: int, title: str = "pyrendering"):
-        # Create the WGPU canvas
-        self.canvas = select_backend().WgpuCanvas(size=(width, height), title=title)
-
-        # Init WGPU
-        self.adapter = wgpu.gpu.request_adapter_sync()
-        self.device = self.adapter.request_device_sync()
-
-        # Create surface and configure
-        self.context = self.canvas.get_context("wgpu")
-        self.surface_format = self.context.get_preferred_format(self.adapter)
-        self.context.configure(
-            device=self.device,
-            format=self.surface_format,
-        )
-
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        title: str = "pyrendering",
+        standalone: bool = False,
+        vsync: bool = True,
+    ):
         self.width = width
         self.height = height
+        self.title = title
+        self.window = None
+        self.last_time = time.time()
 
-        # Create command encoder
-        self.encoder = None
-        self.render_pass = None
+        if standalone:
+            # Create headless context
+            self.ctx = moderngl.create_context(standalone=True)
+        else:
+            # Create windowed context with GLFW
+            if not glfw.init():
+                raise RuntimeError("Failed to initialize GLFW")
 
-        # Batch system
-        self.sprite_batch = SpriteBatch(self.device)
-        self.shape_batch = ShapeBatch(
-            self.device, self.surface_format, self.width, self.height
+            # Create window
+            self.window = glfw.create_window(width, height, title, None, None)
+            if not self.window:
+                glfw.terminate()
+                raise RuntimeError("Failed to create GLFW window")
+
+            # Make context current
+            glfw.make_context_current(self.window)
+
+            # Set the Vsync mode
+            glfw.swap_interval(1 if vsync else 0)
+
+            # Create ModernGL context from current OpenGL context
+            self.ctx = moderngl.create_context()
+
+        # Enable blending for transparency
+        self.ctx.enable(moderngl.BLEND)  # pylint: disable=no-member
+        self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA  # pylint: disable=no-member
+
+        # Create shader program
+        self.program = self.ctx.program(
+            vertex_shader="""
+#version 330
+
+in vec2 in_vert;
+in vec3 in_color;
+
+out vec3 v_color;
+
+uniform vec2 u_resolution;
+
+void main() {
+    // Convert from pixel coordinates to NDC (-1 to 1)
+    vec2 position = ((in_vert / u_resolution) * 2.0) - 1.0;
+    position.y = -position.y; // Flip Y axis
+    
+    v_color = in_color;
+    gl_Position = vec4(position, 0.0, 1.0);
+}
+""",
+            fragment_shader="""
+#version 330
+
+in vec3 v_color;
+out vec4 fragColor;
+
+void main() {
+    fragColor = vec4(v_color, 1.0);
+}
+""",
         )
 
-    def begin_frame(self, clear_color: Color = Color(0, 0, 0, 255)):
-        """Start a new frame"""
-        self.encoder = self.device.create_command_encoder()
+        # Set resolution uniform
+        u_resolution = cast(moderngl.Uniform, self.program["u_resolution"])
+        u_resolution.value = (float(width), float(height))
 
-        # Get current surface texture
-        self.current_texture = self.context.get_current_texture()  # pylint: disable=attribute-defined-outside-init
+        # Create vertex buffer for batched rendering
+        self.vertex_buffer = self.ctx.buffer(
+            reserve=NUM_VERTICES * 5 * 4
+        )  # 5 floats per vertex, 4 bytes each
 
-        # Create render pass
-        self.render_pass = self.encoder.begin_render_pass(
-            color_attachments=[
-                {
-                    "view": self.current_texture.create_view(),
-                    "resolve_target": None,
-                    "clear_value": clear_color.as_normalized(),
-                    "load_op": wgpu.LoadOp.clear,
-                    "store_op": wgpu.StoreOp.store,
-                }
-            ]
+        # Create vertex array object
+        self.vao = self.ctx.vertex_array(
+            self.program, [(self.vertex_buffer, "2f 3f", "in_vert", "in_color")]
         )
 
-    def end_frame(self):
-        """Finish and display the frame"""
-        if self.render_pass:
-            # Flush all batches
-            self.sprite_batch.flush(self.render_pass)
-            self.shape_batch.flush(self.render_pass)
-
-            self.render_pass.end()
-            self.render_pass = None
-
-        if self.encoder:
-            command_buffer = self.encoder.finish()
-            self.device.queue.submit([command_buffer])
-            self.encoder = None
-
-        try:
-            self.context.present()
-        except Exception:
-            pass
-
-    def is_closed(self) -> bool:
-        return self.canvas.is_closed()
-
-    def cleanup(self):
-        """Cleanup resources"""
-        if self.render_pass:
-            self.render_pass.end()
-            self.render_pass = None
-
-        if self.encoder:
-            self.encoder = None
-
-        if hasattr(self, "canvas") and self.canvas:
-            self.canvas.close()
-
-
-class Texture:
-    """Texture wrapper"""
-
-    def __init__(self, device: wgpu.GPUDevice, image_path: str):
-        # Load the image
-        img = Image.open(image_path).convert("RGBA")
-        self.width, self.height = img.size
-
-        # Create GPU texture
-        self.gpu_texture = device.create_texture(
-            size=(self.width, self.height, 1),
-            format=wgpu.TextureFormat.rgba8unorm,  # type: ignore
-            usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,  # type: ignore
-        )
-
-        # Convert image to bytes
-        img_data = np.array(img, dtype=np.uint8)
-
-        # Upload image data
-        device.queue.write_texture(
-            {"texture": self.gpu_texture, "mip_level": 0, "origin": (0, 0, 0)},
-            memoryview(img_data.tobytes()),
-            {
-                "offset": 0,
-                "bytes_per_row": self.width * 4,
-                "rows_per_image": self.height,
-            },
-            (self.width, self.height, 1),
-        )
-
-        # Create texture view for sampling
-        self.view = self.gpu_texture.create_view()
-
-
-class SpriteBatch:
-    """Sprite batching system"""
-
-    def __init__(self, device: wgpu.GPUDevice, max_sprites: int = 1000):
-        self.device = device
-        self.sprites = []
-        self.max_sprites = max_sprites
-
-        # Each sprite = position + size + texture coords + color
-        self.vertex_buffer = None
-        self.setup_pipeline()
-
-    def setup_pipeline(self):
-        """Create rendering pipeline for sprites"""
-        # TODO: actually render stuff :sob:
-
-    def add_sprite(
-        self,
-        texture: Texture,
-        position: Vec2,
-        size: Optional[Vec2] = None,
-        color: Color = Color(1, 1, 1, 1),
-        rotation: float = 0,
-    ):
-        """Add a sprite to the batch"""
-
-        if size is None:
-            size = Vec2(texture.width, texture.height)
-
-        self.sprites.append(
-            {
-                "texture": texture,
-                "position": position,
-                "size": size,
-                "color": color,
-                "rotation": rotation,
-            }
-        )
-
-        # Auto flush if batch is full
-        if len(self.sprites) >= self.max_sprites:
-            self.flush()
-
-    def flush(self, render_pass=None):
-        """Render all batched sprites"""
-        if not self.sprites or not render_pass:
-            return
-
-        # TODO: update vertex buffer with sprite data
-        # TODO: make draw calls
-        # TODO: clear sprite list
-
-        self.sprites.clear()
-
-
-class ShapeBatch:
-    """Shape drawing system"""
-
-    def __init__(self, device: wgpu.GPUDevice, surface_format, width: int, height: int):
-        self.device = device
+        # Vertex data for current frame
         self.vertices = []
-        self.indices = []
-        self.line_vertices = []
-        self.line_indices = []
 
-    def add_rectangle(self, rect: Rect, color: Color, filled: bool = True):
-        """Add a rectangle to the batch"""
-
-        if filled:
-            # Add 4 vertices for filled quad
-            base_idx = len(self.vertices)
-
-            self.vertices.extend(
-                [
-                    [rect.x, rect.y, *color.as_normalized()],
-                    [rect.x + rect.width, rect.y, *color.as_normalized()],
-                    [rect.x + rect.width, rect.y + rect.height, *color.as_normalized()],
-                    [rect.x, rect.y + rect.height, *color.as_normalized()],
-                ]
-            )
-
-            # Add indices for 2 triangles
-            self.indices.extend(
-                [
-                    base_idx,
-                    base_idx + 1,
-                    base_idx + 2,
-                    base_idx,
-                    base_idx + 2,
-                    base_idx + 3,
-                ]
+        # Create framebuffer for offscreen rendering if needed
+        if standalone:
+            self.fbo = self.ctx.framebuffer(
+                color_attachments=[self.ctx.texture((width, height), 4)]
             )
         else:
-            # Add vertices for rectangle outline
-            base_idx = len(self.line_vertices)
-            self.line_vertices.extend(
-                [
-                    [rect.x, rect.y, *color.as_normalized()],
-                    [rect.x + rect.width, rect.y, *color.as_normalized()],
-                    [rect.x + rect.width, rect.y + rect.height, *color.as_normalized()],
-                    [rect.x, rect.y + rect.height, *color.as_normalized()],
-                ]
-            )
+            self.fbo = None
 
-            # Add indices for line loop
-            self.line_indices.extend(
-                [
-                    base_idx, base_idx + 1,
-                    base_idx + 1, base_idx + 2,
-                    base_idx + 2, base_idx + 3,
-                    base_idx + 3, base_idx
-                ]
-            )
+    def clear(self, color: Color):
+        """Clear the screen with a color"""
+        normalized = color.as_normalized()
+        self.ctx.clear(normalized[0], normalized[1], normalized[2], normalized[3])
 
-    def add_circle(self, circle: Circle, color: Color, segments: int = 32):
-        base_idx = len(self.vertices)
+    def screen_to_ndc(self, x: float, y: float) -> Tuple[float, float]:
+        """Convert screen coordinates to normalized device coordinates"""
+        ndc_x = (x / self.width) * 2.0 - 1.0
+        ndc_y = -((y / self.height) * 2.0 - 1.0)  # flip Y
+        return ndc_x, ndc_y
 
-        center = circle.center
+    def add_vertex(self, x: float, y: float, color: Color):
+        """Add a vertex to the batch"""
+        r, g, b = color.as_rgb_normalized()
+        self.vertices.extend([x, y, r, g, b])
+
+    def draw_rect(self, rect: Rect, color: Color, filled: bool = True):
+        """Draw a rectangle"""
+        if filled:
+            # Add vertices for filled rectangle (2 triangles)
+            # Triangle 1
+            self.add_vertex(rect.x, rect.y, color)
+            self.add_vertex(rect.x + rect.width, rect.y, color)
+            self.add_vertex(rect.x, rect.y + rect.height, color)
+
+            # Triangle 2
+            self.add_vertex(rect.x + rect.width, rect.y, color)
+            self.add_vertex(rect.x + rect.width, rect.y + rect.height, color)
+            self.add_vertex(rect.x, rect.y + rect.height, color)
+        else:
+            # Add vertices for rectangle outline (lines)
+            # Top line
+            self.add_vertex(rect.x, rect.y, color)
+            self.add_vertex(rect.x + rect.width, rect.y, color)
+
+            # Right line
+            self.add_vertex(rect.x + rect.width, rect.y, color)
+            self.add_vertex(rect.x + rect.width, rect.y + rect.height, color)
+
+            # Bottom line
+            self.add_vertex(rect.x + rect.width, rect.y + rect.height, color)
+            self.add_vertex(rect.x, rect.y + rect.height, color)
+
+            # Left line
+            self.add_vertex(rect.x, rect.y + rect.height, color)
+            self.add_vertex(rect.x, rect.y, color)
+
+    def draw_circle(self, circle: Circle, color: Color, segments: int = 32):
+        """Draw a circle"""
+        center_x, center_y = circle.center.x, circle.center.y
         radius = circle.radius
 
-        # Add center vertex
-        self.vertices.append([center.x, center.y, *color.as_normalized()])
-
-        # Add perimeter vertices
+        # Generate triangles from center to perimeter
         for i in range(segments):
-            angle = 2 * math.pi * i / segments
-            x = center.x + radius * math.cos(angle)
-            y = center.y + radius * math.sin(angle)
-            self.vertices.append([x, y, *color.as_normalized()])
+            angle1 = 2 * math.pi * i / segments
+            angle2 = 2 * math.pi * (i + 1) / segments
 
-        # Add triangles from center to perimeter
-        for i in range(segments):
-            next_i = (i + 1) % segments
-            self.indices.extend([base_idx, base_idx + 1 + i, base_idx + 1 + next_i])
+            # Center vertex
+            self.add_vertex(center_x, center_y, color)
 
-    def flush(self, render_pass=None):
-        """Render all batched shapes"""
-        if not render_pass:
+            # First perimeter vertex
+            x1 = center_x + radius * math.cos(angle1)
+            y1 = center_y + radius * math.sin(angle1)
+            self.add_vertex(x1, y1, color)
+
+            # Second perimeter vertex
+            x2 = center_x + radius * math.cos(angle2)
+            y2 = center_y + radius * math.sin(angle2)
+            self.add_vertex(x2, y2, color)
+
+    def begin_frame(self):
+        """Begin a new frame"""
+        self.vertices.clear()
+        if self.fbo:
+            self.fbo.use()
+
+    def flush(self):
+        """Render all batched geometry"""
+        if not self.vertices:
             return
 
-        # TODO: upload vertices/indices to GPU and draw
+        # Convert to numpy array and upload to GPU
+        vertex_data = np.array(self.vertices, dtype=np.float32)
+        self.vertex_buffer.write(vertex_data.tobytes())
 
+        # Draw triangles for filled shapes and lines for wireframes
+        num_vertices = len(self.vertices) // 5
+
+        # Render the vertices
+        if num_vertices >= 3:
+            self.ctx.viewport = (0, 0, self.width, self.height)
+            self.vao.render(vertices=num_vertices)
+
+        # Clear vertex buffer for next frame
         self.vertices.clear()
-        self.indices.clear()
-        self.line_vertices.clear()
-        self.line_indices.clear()
+
+    def display(self):
+        """Present the rendered frame"""
+        self.flush()
+        # Swap buffers if using windowed mode
+        if self.window:
+            glfw.swap_buffers(self.window)
+
+    def tick(self, target_fps: float) -> float:
+        """Cap frame rate and return normalized delta time."""
+        now = time.time()
+        elapsed = now - self.last_time
+        target_frame_time = 1.0 / target_fps if target_fps > 0 else 0.0
+
+        if target_frame_time > 0.0 and elapsed < target_frame_time:
+            time.sleep(target_frame_time - elapsed)
+            now = time.time()
+            elapsed = now - self.last_time
+
+        self.last_time = now
+
+        if target_fps > 0 and elapsed > 0:
+            actual_fps = 1.0 / elapsed
+            normalized = actual_fps / target_fps
+            return max(0.0, min(normalized, 1.0))
+        return 0.0
+
+    def should_close(self) -> bool:
+        """Check if the window should close"""
+        if self.window:
+            return glfw.window_should_close(self.window)
+        return False
+
+    def poll_events(self):
+        """Poll for window events"""
+        if self.window:
+            glfw.poll_events()
+
+    def cleanup(self):
+        """Clean up resources"""
+        if hasattr(self, "vertex_buffer"):
+            self.vertex_buffer.release()
+        if hasattr(self, "vao"):
+            self.vao.release()
+        if hasattr(self, "program"):
+            self.program.release()
+        if hasattr(self, "fbo") and self.fbo:
+            self.fbo.release()
+
+        # Clean up GLFW
+        if self.window:
+            glfw.destroy_window(self.window)
+            glfw.terminate()
 
 
 class Graphics:
     """Graphics handler"""
 
-    def __init__(self, width: int = 800, height: int = 600, title: str = "Graphics"):
-        self.context = GraphicsContext(width, height, title)
-        self.textures = {}  # Texture cache
-        self.last_frame = time.perf_counter()
-
-    def tick(self, fps: int):
-        if fps > 0:
-            now = time.perf_counter()
-            elapsed = now - self.last_frame
-            delay = max(0, (1.0 / fps) - elapsed)
-            if delay > 0:
-                time.sleep(delay)
-            self.last_frame = time.perf_counter()
-
-    def load_texture(self, path: str, name: Optional[str] = None) -> Texture:
-        if name is None:
-            name = path
-
-        if name not in self.textures:
-            self.textures[name] = Texture(self.context.device, path)
-
-        return self.textures[name]
-
-    def clear(self, color: Color = Color(0, 0, 0, 255)):
-        """Clear the screen with a color"""
-        self.context.begin_frame(color)
-        self.context.end_frame()
-
-    def draw_sprite(
+    def __init__(
         self,
-        texture_name: str,
-        position: Vec2,
-        size: Optional[Vec2] = None,
-        color: Color = Color(255, 255, 255, 255),
-        rotation: float = 0,
+        width: int = 800,
+        height: int = 600,
+        title: str = "Graphics",
+        standalone: bool = False,
+        vsync: bool = True,
     ):
-        """Draw a sprite"""
-        texture = self.textures[texture_name]
-        self.context.sprite_batch.add_sprite(texture, position, size, color, rotation)
+        self.graphics_context = GraphicsContext(width, height, title, standalone, vsync)
+
+    def should_close(self) -> bool:
+        """Check if the window should close"""
+        return self.graphics_context.should_close()
+
+    def poll_events(self):
+        """Poll for window events"""
+        self.graphics_context.poll_events()
+
+    def begin_frame(self):
+        """Begin a new frame"""
+        self.graphics_context.begin_frame()
+
+    def clear(self, color: Color):
+        """Clear the screen"""
+        self.graphics_context.clear(color)
 
     def draw_rect(self, rect: Rect, color: Color, filled: bool = True):
         """Draw a rectangle"""
-        self.context.shape_batch.add_rectangle(rect, color, filled)
+        self.graphics_context.draw_rect(rect, color, filled)
 
-    def draw_circle(self, circle: Circle, color: Color):
+    def draw_circle(self, circle: Circle, color: Color, segments: int = 32):
         """Draw a circle"""
-        self.context.shape_batch.add_circle(circle, color)
+        self.graphics_context.draw_circle(circle, color, segments)
 
     def display(self):
-        """Display the frame (call once per frame)"""
-        self.last_frame = time.perf_counter()
-        self.context.end_frame()
+        """Display the frame"""
+        self.graphics_context.display()
 
-    def begin_frame(self):
-        """Start a new frame"""
-        self.context.begin_frame(getattr(self, "clear_color", Color(0, 0, 0, 255)))
-
-    def is_closed(self) -> bool:
-        """Check if the graphics context is closed"""
-        return self.context.is_closed()
+    def tick(self, target_fps: float) -> float:
+        """Update timing"""
+        return self.graphics_context.tick(target_fps)
 
     def cleanup(self):
-        """Cleanup resources"""
-        self.context.cleanup()
-        self.textures.clear()
+        """Clean up resources"""
+        self.graphics_context.cleanup()
 
 
 def main():
     """Testest"""
 
     # Initialize graphics
-    gfx = Graphics(800, 600, "My Game")
+    gfx = Graphics(800, 600, "My Game", standalone=False, vsync=True)
     frame_count = 0
+    target_fps = 60
 
     try:
-        while not gfx.is_closed():
+        # Run until window closes
+        while not gfx.should_close():
+            delta_time = gfx.tick(target_fps)
+
             frame_count += 1
 
+            gfx.poll_events()
             gfx.begin_frame()
+
             gfx.clear(Color.from_hex("#1a1a2e"))  # Dark blue background
 
             # Draw some shapes
@@ -533,11 +502,14 @@ def main():
                 Rect(350, 100, 150, 100), Color.from_hex("#ffffff"), filled=False
             )
 
-            gfx.tick(1)
             gfx.display()
-            print(f"Frame {frame_count} rendered")
 
-    except Exception as e: # pylint: disable=broad-exception-caught
+            if frame_count % target_fps == 0:  # Print data every second
+                print(
+                    f"Frame {frame_count} rendered. FPS: {(target_fps * delta_time):.2f}"
+                )
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"Error during rendering: {e}")
         traceback.print_exc()
     finally:

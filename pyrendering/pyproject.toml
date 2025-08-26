@@ -6,12 +6,12 @@ readme = "README.md"
 authors = [
     { name = "ShyMike", email = "122023566+ImShyMike@users.noreply.github.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "glfw>=2.9.0",
-    "numpy>=2.2.6",
+    "moderngl>=5.12.0",
+    "numpy==2.3.2",
     "pillow>=11.3.0",
-    "wgpu>=0.23.0",
 ]
 
 [build-system]
