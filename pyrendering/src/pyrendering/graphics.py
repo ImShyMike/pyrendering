@@ -1,6 +1,5 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
-import math
 import time
 from typing import Tuple, cast
 
@@ -9,7 +8,7 @@ import moderngl
 import numpy as np
 
 from pyrendering.color import Color
-from pyrendering.shapes import Circle, Rect
+from pyrendering.shapes import Shape, Circle, Rect
 
 NUM_VERTICES = 10000
 
@@ -57,6 +56,9 @@ class GraphicsContext:
 
             # Set the Vsync mode
             glfw.swap_interval(1 if vsync else 0)
+
+            self.monitor = glfw.get_primary_monitor()
+            self.mode = glfw.get_video_mode(self.monitor)
 
             # Create ModernGL context from current OpenGL context
             self.ctx = moderngl.create_context()
@@ -117,8 +119,11 @@ void main() {
 
         # Vertex data for current frame
         self.draw_mode = DrawMode.TRIANGLE
-        self.triangle_vertices = []
-        self.line_vertices = []
+
+        self.triangle_vertices = np.empty(
+            (0, 5), dtype=np.float32
+        )  # 5 floats per vertex
+        self.line_vertices = np.empty((0, 5), dtype=np.float32)  # 5 floats per vertex
 
         # Create framebuffer for offscreen rendering if needed
         if standalone:
@@ -139,115 +144,131 @@ void main() {
         ndc_y = -((y / self.height) * 2.0 - 1.0)  # flip Y
         return ndc_x, ndc_y
 
-    def add_vertex(
-        self, x: float, y: float, color: Color
-    ):
+    def get_monitor_mode(self) -> Tuple[int, int, int]:
+        """Get the current monitor mode (width, height, refresh rate)"""
+        if self.monitor and self.mode:
+            return self.mode.size.width, self.mode.size.height, self.mode.refresh_rate
+        return 0, 0, 0
+
+    def add_vertex(self, x: float, y: float, color: Color):
         """Add a vertex to the batch"""
         r, g, b = color.as_rgb_normalized()
+        vertex = np.array([x, y, r, g, b], dtype=np.float32)
         if self.draw_mode == DrawMode.TRIANGLE:
-            self.triangle_vertices.extend([x, y, r, g, b])
+            self.triangle_vertices = np.append(self.triangle_vertices, [vertex], axis=0)
         elif self.draw_mode == DrawMode.LINE:
-            self.line_vertices.extend([x, y, r, g, b])
+            self.line_vertices = np.append(self.line_vertices, [vertex], axis=0)
 
-    def draw_rect(self, rect: Rect, color: Color, filled: bool = True):
+    def draw_rect(self, rect: Rect):
         """Draw a rectangle"""
-        if filled:
+        x, y = rect.x, rect.y
+        width, height = rect.width, rect.height
+        color = rect.color
+
+        if rect.filled:
             # Add vertices for filled rectangle (2 triangles)
             self.draw_mode = DrawMode.TRIANGLE
 
             # Triangle 1
-            self.add_vertex(rect.x, rect.y, color)
-            self.add_vertex(rect.x + rect.width, rect.y, color)
-            self.add_vertex(rect.x, rect.y + rect.height, color)
+            self.add_vertex(x, y, color)
+            self.add_vertex(x + width, y, color)
+            self.add_vertex(x, y + height, color)
 
             # Triangle 2
-            self.add_vertex(rect.x + rect.width, rect.y, color)
-            self.add_vertex(rect.x + rect.width, rect.y + rect.height, color)
-            self.add_vertex(rect.x, rect.y + rect.height, color)
+            self.add_vertex(x + width, y, color)
+            self.add_vertex(x + width, y + height, color)
+            self.add_vertex(x, y + height, color)
         else:
             # Add vertices for rectangle outline (lines)
             self.draw_mode = DrawMode.LINE
 
             # Top line
-            self.add_vertex(rect.x, rect.y, color)
-            self.add_vertex(rect.x + rect.width, rect.y, color)
+            self.add_vertex(x, y, color)
+            self.add_vertex(x + width, y, color)
 
             # Right line
-            self.add_vertex(rect.x + rect.width, rect.y, color)
-            self.add_vertex(rect.x + rect.width, rect.y + rect.height, color)
+            self.add_vertex(x + width, y, color)
+            self.add_vertex(x + width, y + height, color)
 
             # Bottom line
-            self.add_vertex(rect.x + rect.width, rect.y + rect.height, color)
-            self.add_vertex(rect.x, rect.y + rect.height, color)
+            self.add_vertex(x + width, y + height, color)
+            self.add_vertex(x, y + height, color)
 
             # Left line
-            self.add_vertex(rect.x, rect.y + rect.height, color)
-            self.add_vertex(rect.x, rect.y, color)
+            self.add_vertex(x, y + height, color)
+            self.add_vertex(x, y, color)
 
-    def draw_circle(self, circle: Circle, color: Color, segments: int = 32):
+    def draw_circle(self, circle: Circle):
         """Draw a circle"""
-        center_x, center_y = circle.center.x, circle.center.y
+        center = circle.center.data
         radius = circle.radius
+        color = circle.color
+        segments = circle.segments
 
         self.draw_mode = DrawMode.TRIANGLE
 
-        # Generate triangles from center to perimeter
+        # Generate angles for the circle
+        angles = np.linspace(0, 2 * np.pi, segments, endpoint=False)
+        offsets = np.stack((np.cos(angles), np.sin(angles)), axis=1) * radius
+
+        # Create vertices for the circle
+        center_vertex = np.array(
+            [*center, *color.as_rgb_normalized()], dtype=np.float32
+        )
+        vertices = np.empty((0, 5), dtype=np.float32)
+
         for i in range(segments):
-            angle1 = 2 * math.pi * i / segments
-            angle2 = 2 * math.pi * (i + 1) / segments
+            v1 = center + offsets[i]
+            v2 = center + offsets[(i + 1) % segments]
+            triangle = np.array(
+                [
+                    center_vertex,
+                    [*v1, *color.as_rgb_normalized()],
+                    [*v2, *color.as_rgb_normalized()],
+                ],
+                dtype=np.float32,
+            )
+            vertices = np.append(vertices, triangle, axis=0)
 
-            # Center vertex
-            self.add_vertex(center_x, center_y, color)
-
-            # First perimeter vertex
-            x1 = center_x + radius * math.cos(angle1)
-            y1 = center_y + radius * math.sin(angle1)
-            self.add_vertex(x1, y1, color)
-
-            # Second perimeter vertex
-            x2 = center_x + radius * math.cos(angle2)
-            y2 = center_y + radius * math.sin(angle2)
-            self.add_vertex(x2, y2, color)
+        self.triangle_vertices = np.append(self.triangle_vertices, vertices, axis=0)
 
     def begin_frame(self):
         """Begin a new frame"""
-        self.triangle_vertices.clear()
-        self.line_vertices.clear()
+        self.triangle_vertices = self.triangle_vertices[:0]
+        self.line_vertices = self.line_vertices[:0]
         if self.fbo:
             self.fbo.use()
 
     def flush(self):
         """Render all batched geometry"""
-        if not self.triangle_vertices and not self.line_vertices:
+        if self.triangle_vertices.size == 0 and self.line_vertices.size == 0:
             return
 
-        # Convert triangle vertices to numpy array and upload to GPU
-        if self.triangle_vertices:
-            triangle_vertex_data = np.array(self.triangle_vertices, dtype=np.float32)
-            self.vertex_buffer.write(triangle_vertex_data.tobytes())
+        # Upload triangle vertices to GPU
+        if self.triangle_vertices.size > 0:
+            self.vertex_buffer.write(self.triangle_vertices.tobytes())
 
             # Calculate the number of triangle vertices
-            triangle_num_vertices = len(self.triangle_vertices) // 5
+            triangle_num_vertices = len(self.triangle_vertices)
 
             # Render triangles
             if triangle_num_vertices >= 3:  # At least 3 vertices, render as triangles
-                self.vao.render(moderngl.TRIANGLES, vertices=triangle_num_vertices)
+                self.vao.render(moderngl.TRIANGLES, vertices=triangle_num_vertices)  # pylint: disable=no-member
 
-        # Convert line vertices to numpy array and upload to GPU
-        if self.line_vertices:
-            line_vertex_data = np.array(self.line_vertices, dtype=np.float32)
-            self.vertex_buffer.write(line_vertex_data.tobytes())
+        # Upload line vertices to GPU
+        if self.line_vertices.size > 0:
+            self.vertex_buffer.write(self.line_vertices.tobytes())
 
             # Calculate the number of line vertices
-            line_num_vertices = len(self.line_vertices) // 5
+            line_num_vertices = len(self.line_vertices)
 
             # Render lines
             if line_num_vertices >= 2:
                 self.vao.render(moderngl.LINES, vertices=line_num_vertices)  # pylint: disable=no-member
 
         # Clear vertex buffers for next frame
-        self.triangle_vertices.clear()
-        self.line_vertices.clear()
+        self.triangle_vertices = self.triangle_vertices[:0]
+        self.line_vertices = self.line_vertices[:0]
 
     def display(self):
         """Present the rendered frame"""
@@ -256,8 +277,8 @@ void main() {
         if self.window:
             glfw.swap_buffers(self.window)
 
-    def tick(self, target_fps: float) -> float:
-        """Cap frame rate and return normalized delta time."""
+    def tick(self, target_fps: float = 0) -> float:
+        """Cap frame rate and return delta time in seconds."""
         now = time.time()
         elapsed = now - self.last_time
         target_frame_time = 1.0 / target_fps if target_fps > 0 else 0.0
@@ -268,12 +289,7 @@ void main() {
             elapsed = now - self.last_time
 
         self.last_time = now
-
-        if target_fps > 0 and elapsed > 0:
-            actual_fps = 1.0 / elapsed
-            normalized = actual_fps / target_fps
-            return max(0.0, min(normalized, 1.0))
-        return 0.0
+        return elapsed
 
     def should_close(self) -> bool:
         """Check if the window should close"""
@@ -316,6 +332,10 @@ class Graphics:
     ):
         self.graphics_context = GraphicsContext(width, height, title, standalone, vsync)
 
+    def get_monitor_mode(self) -> Tuple[int, int, int]:
+        """Get the current monitor mode (width, height, refresh rate)"""
+        return self.graphics_context.get_monitor_mode()
+
     def should_close(self) -> bool:
         """Check if the window should close"""
         return self.graphics_context.should_close()
@@ -332,13 +352,14 @@ class Graphics:
         """Clear the screen"""
         self.graphics_context.clear(color)
 
-    def draw_rect(self, rect: Rect, color: Color, filled: bool = True):
-        """Draw a rectangle"""
-        self.graphics_context.draw_rect(rect, color, filled)
-
-    def draw_circle(self, circle: Circle, color: Color, segments: int = 32):
-        """Draw a circle"""
-        self.graphics_context.draw_circle(circle, color, segments)
+    def draw(self, shape: Shape):
+        """Draw a shape"""
+        if isinstance(shape, Rect):
+            self.graphics_context.draw_rect(shape)
+        elif isinstance(shape, Circle):
+            self.graphics_context.draw_circle(shape)
+        else:
+            raise ValueError("Unsupported shape type")
 
     def display(self):
         """Display the frame"""

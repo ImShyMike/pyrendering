@@ -1,27 +1,38 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
 from dataclasses import dataclass
+import numpy as np
 
 
 @dataclass
 class Vec2:
     """2D Vector"""
 
-    x: float
-    y: float
+    data: np.ndarray
+
+    def __init__(self, x: float, y: float):
+        self.data = np.array([x, y], dtype=float)
+
+    @property
+    def x(self) -> float:
+        return self.data[0]
+
+    @property
+    def y(self) -> float:
+        return self.data[1]
 
     def __add__(self, other: "Vec2") -> "Vec2":
-        return Vec2(self.x + other.x, self.y + other.y)
+        return Vec2(*(self.data + other.data))
 
     def __sub__(self, other: "Vec2") -> "Vec2":
-        return Vec2(self.x - other.x, self.y - other.y)
+        return Vec2(*(self.data - other.data))
 
     def __mul__(self, scalar) -> "Vec2":
-        return Vec2(self.x * scalar, self.y * scalar)
+        return Vec2(*(self.data * scalar))
 
     def length(self) -> float:
-        return (self.x**2 + self.y**2) ** 0.5
+        return float(np.linalg.norm(self.data))
 
     def normalize(self) -> "Vec2":
-        l = self.length()  # noqa: E741
-        return Vec2(self.x / l, self.y / l) if l > 0 else Vec2(0, 0)
+        length = self.length()
+        return Vec2(*(self.data / length)) if length > 0 else Vec2(0, 0)

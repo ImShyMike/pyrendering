@@ -14,9 +14,9 @@ NormalRGBA = Tuple[float, float, float, float]
 class Color:
     """Color class"""
 
-    r: int
-    g: int
-    b: int
+    r: int = 255
+    g: int = 255
+    b: int = 255
     a: int = 255
 
     def as_tuple(self) -> RGBA:
