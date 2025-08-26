@@ -36,28 +36,34 @@ class FontRenderer:
         temp_img = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
         temp_draw = ImageDraw.Draw(temp_img)
 
-        bbox = temp_draw.textbbox((0, 0), char, font=self.font, anchor="lb")
+        # Anchor (left, baseline)
+        bbox = temp_draw.textbbox((0, 0), char, font=self.font, anchor="ls")
 
         if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:  # Empty character
             width = self.font_size // 2
             advance = width
-            char_bbox_top = 0
+            char_height = self.font_size + 4
         else:
             width = bbox[2] - bbox[0]
             advance = width
-            char_bbox_top = bbox[1]
+            # Calculate height based on bbox for 'ls' anchor
+            char_height = max(bbox[3] - bbox[1], self.font_size) + 4
 
-        # Create character image with consistent height for all characters
-        char_height = int(self.font_size) + 4
+        # Create character image with padding
         char_width = width + 4
         char_img = Image.new(
             "RGBA", (round(char_width), round(char_height)), (0, 0, 0, 0)
         )
         char_draw = ImageDraw.Draw(char_img)
 
-        draw_y = int(self.font_size * 0.8) + char_bbox_top + 4
+        baseline_y = char_height - 6  # 6 pixels from bottom for padding
+
         char_draw.text(
-            (2, draw_y), char, font=self.font, fill=(255, 255, 255, 255), anchor="lt"
+            (2, baseline_y),
+            char,
+            font=self.font,
+            fill=(255, 255, 255, 255),
+            anchor="ls",
         )
 
         # Convert to texture
