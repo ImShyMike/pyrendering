@@ -1,7 +1,10 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
 import numpy as np
+
+from pyrendering.color import Color
 
 
 @dataclass
@@ -36,3 +39,22 @@ class Vec2:
     def normalize(self) -> "Vec2":
         length = self.length()
         return Vec2(*(self.data / length)) if length > 0 else Vec2(0, 0)
+
+
+@dataclass
+class Point:
+    """Point class"""
+
+    position: Vec2
+    color: Color = field(default_factory=Color)
+
+    @property
+    def x(self) -> float:
+        return self.position.x
+
+    @property
+    def y(self) -> float:
+        return self.position.y
+
+    def unpack(self):
+        return self.position.x, self.position.y, self.color

@@ -43,6 +43,9 @@ class Color:
         r, g, b, a = self.r & 0xFF, self.g & 0xFF, self.b & 0xFF, self.a & 0xFF
         return f"#{r:02x}{g:02x}{b:02x}{a:02x}"
 
+    def with_alpha(self, alpha: int) -> "Color":
+        return Color(self.r, self.g, self.b, alpha & 0xFF)
+
     @staticmethod
     def from_rgb(r: int, g: int, b: int) -> "Color":
         return Color(r & 0xFF, g & 0xFF, b & 0xFF, 255)

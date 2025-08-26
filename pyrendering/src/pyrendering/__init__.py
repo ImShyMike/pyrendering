@@ -2,7 +2,7 @@
 
 from pyrendering.color import Color
 from pyrendering.graphics import Graphics
-from pyrendering.shapes import Circle, Rect, RoundedRect, Triangle
-from pyrendering.vectors import Vec2
+from pyrendering.shapes import Circle, Rect, Triangle
+from pyrendering.vectors import Vec2, Point
 
-__all__ = ["Color", "Vec2", "Rect", "Circle", "RoundedRect", "Triangle", "Graphics"]
+__all__ = ["Color", "Vec2", "Point", "Rect", "Circle", "Triangle", "Graphics"]

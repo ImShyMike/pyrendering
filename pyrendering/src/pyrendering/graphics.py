@@ -8,7 +8,7 @@ import moderngl
 import numpy as np
 
 from pyrendering.color import Color
-from pyrendering.shapes import Circle, Rect, RoundedRect, Shape, Triangle
+from pyrendering.shapes import Circle, Rect, Shape, Triangle
 
 NUM_VERTICES = 10000
 
@@ -201,23 +201,18 @@ void main() {
     def draw_triangle(self, triangle: Triangle):
         """Draw a triangle using simple rendering"""
         p1, p2, p3 = triangle.p1, triangle.p2, triangle.p3
-        color = triangle.color
 
-        self.add_vertex_simple(p1.x, p1.y, color, DrawMode.TRIANGLE)
-        self.add_vertex_simple(p2.x, p2.y, color, DrawMode.TRIANGLE)
-        self.add_vertex_simple(p3.x, p3.y, color, DrawMode.TRIANGLE)
+        self.add_vertex_simple(p1.x, p1.y, p1.color, DrawMode.TRIANGLE)
+        self.add_vertex_simple(p2.x, p2.y, p2.color, DrawMode.TRIANGLE)
+        self.add_vertex_simple(p3.x, p3.y, p3.color, DrawMode.TRIANGLE)
 
     def draw_rect(self, rect: Rect):
         """Draw a rectangle using efficient indexed rendering"""
-        x, y = rect.x, rect.y
-        width, height = rect.width, rect.height
-        color = rect.color
-
         # Add the 4 vertices for the rectangle
-        v0 = self.add_indexed_vertex(x, y, color)
-        v1 = self.add_indexed_vertex(x + width, y, color)
-        v2 = self.add_indexed_vertex(x + width, y + height, color)
-        v3 = self.add_indexed_vertex(x, y + height, color)
+        v0 = self.add_indexed_vertex(*rect.p1.unpack())
+        v1 = self.add_indexed_vertex(*rect.p2.unpack())
+        v2 = self.add_indexed_vertex(*rect.p3.unpack())
+        v3 = self.add_indexed_vertex(*rect.p4.unpack())
 
         if rect.filled:
             # Two triangles for filled rectangle: (v0,v1,v3) and (v1,v2,v3)
@@ -227,11 +222,6 @@ void main() {
             # Four lines for rectangle outline: v0->v1, v1->v2, v2->v3, v3->v0
             line_indices = np.array([v0, v1, v1, v2, v2, v3, v3, v0], dtype=np.uint32)
             self.add_line_indices(line_indices)
-
-    def draw_rounded_rect(self, rounded_rect: RoundedRect):
-        """Draw a rounded rectangle"""
-        # TODO: Implement rounded rectangle drawing
-        pass
 
     def draw_circle(self, circle: Circle):
         """Draw a circle using simple rendering (could be optimized with indexed rendering later)"""
@@ -278,15 +268,19 @@ void main() {
             if self.triangle_indices.size > 0:
                 self.index_buffer_gl.write(self.triangle_indices.tobytes())
                 self.vao_indexed.render(
-                    moderngl.TRIANGLES, vertices=len(self.indexed_vertices), instances=1 # pylint: disable=no-member
-                )  # pylint: disable=no-member
+                    moderngl.TRIANGLES,  # pylint: disable=no-member
+                    vertices=len(self.indexed_vertices),
+                    instances=1,
+                )
 
             # Render lines with indices
             if self.line_indices.size > 0:
                 self.index_buffer_gl.write(self.line_indices.tobytes())
                 self.vao_indexed.render(
-                    moderngl.LINES, vertices=len(self.indexed_vertices), instances=1 # pylint: disable=no-member
-                )  # pylint: disable=no-member
+                    moderngl.LINES,  # pylint: disable=no-member
+                    vertices=len(self.indexed_vertices),
+                    instances=1,
+                )
 
         # Render simple geometry (triangles and lines without indices)
         total_simple_vertices = len(self.triangle_vertices) + len(self.line_vertices)
@@ -301,16 +295,20 @@ void main() {
             if len(self.triangle_vertices) > 0:
                 triangle_count = len(self.triangle_vertices)
                 self.vao_simple.render(
-                    moderngl.TRIANGLES, vertices=triangle_count, first=0 # pylint: disable=no-member
-                )  # pylint: disable=no-member
+                    moderngl.TRIANGLES,  # pylint: disable=no-member
+                    vertices=triangle_count,
+                    first=0,
+                )
 
             # Render lines
             if len(self.line_vertices) > 0:
                 line_count = len(self.line_vertices)
                 line_start = len(self.triangle_vertices)
                 self.vao_simple.render(
-                    moderngl.LINES, vertices=line_count, first=line_start # pylint: disable=no-member
-                )  # pylint: disable=no-member
+                    moderngl.LINES,  # pylint: disable=no-member
+                    vertices=line_count,
+                    first=line_start,
+                )
 
     def display(self):
         """Present the rendered frame"""
@@ -409,8 +407,6 @@ class Graphics:
         """Draw a shape"""
         if isinstance(shape, Triangle):
             self.graphics_context.draw_triangle(shape)
-        elif isinstance(shape, RoundedRect):
-            self.graphics_context.draw_rounded_rect(shape)
         elif isinstance(shape, Rect):
             self.graphics_context.draw_rect(shape)
         elif isinstance(shape, Circle):
