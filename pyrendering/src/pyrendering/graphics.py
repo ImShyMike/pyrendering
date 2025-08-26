@@ -8,7 +8,8 @@ import moderngl
 import numpy as np
 
 from pyrendering.color import Color
-from pyrendering.shapes import Circle, Rect, Shape, Triangle
+from pyrendering.font import FontRenderer
+from pyrendering.shapes import Circle, Rect, Shape, Triangle, Vec2
 
 NUM_VERTICES = 10000
 
@@ -45,6 +46,11 @@ class GraphicsContext:
             if not glfw.init():
                 raise RuntimeError("Failed to initialize GLFW")
 
+            # Set the version of OpenGL
+            glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+            glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+            glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+
             # Create window
             self.window = glfw.create_window(width, height, title, None, None)
             if not self.window:
@@ -71,10 +77,13 @@ class GraphicsContext:
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA  # pylint: disable=no-member
 
         # Enable multisampling in the OpenGL context
-        self.ctx.enable_direct(0x809D) # GL_MULTISAMPLE
+        self.ctx.enable_direct(0x809D)  # GL_MULTISAMPLE
 
         # Set the viewport
         self.ctx.viewport = (0, 0, width, height)
+
+        # Create the font renderer
+        self.font_renderer = FontRenderer(self.ctx)
 
         # Create shader program
         self.program = self.ctx.program(
@@ -109,9 +118,52 @@ void main() {
 """,
         )
 
+        # Create text shader program
+        self.text_program = self.ctx.program(
+            vertex_shader="""
+#version 330
+
+in vec2 in_vert;
+in vec2 in_texcoord;
+in vec4 in_color;
+
+out vec2 v_texcoord;
+out vec4 v_color;
+
+uniform vec2 u_resolution;
+
+void main() {
+    vec2 position = ((in_vert / u_resolution) * 2.0) - 1.0;
+    position.y = -position.y;
+    
+    v_texcoord = in_texcoord;
+    v_color = in_color;
+    gl_Position = vec4(position, 0.0, 1.0);
+}
+""",
+            fragment_shader="""
+#version 330
+
+in vec2 v_texcoord;
+in vec4 v_color;
+out vec4 fragColor;
+
+uniform sampler2D u_texture;
+
+void main() {
+    vec4 texColor = texture(u_texture, v_texcoord);
+    fragColor = vec4(v_color.rgb, v_color.a * texColor.a);
+}
+""",
+        )
+
         # Set resolution uniform
         u_resolution = cast(moderngl.Uniform, self.program["u_resolution"])
         u_resolution.value = (float(width), float(height))
+
+        # Set resolution uniform for text shader
+        text_u_resolution = cast(moderngl.Uniform, self.text_program["u_resolution"])
+        text_u_resolution.value = (float(width), float(height))
 
         # Create vertex buffer for batched rendering
         self.vertex_buffer = self.ctx.buffer(
@@ -123,6 +175,11 @@ void main() {
             reserve=NUM_VERTICES * 6 * 4  # Reserve space for indices
         )
 
+        # Create text vertex buffer
+        self.text_vertex_buffer = self.ctx.buffer(
+            reserve=NUM_VERTICES * 8 * 4
+        )  # 8 floats per vertex
+
         # Create vertex array objects for both indexed and non-indexed rendering
         self.vao_indexed = self.ctx.vertex_array(
             self.program,
@@ -132,6 +189,20 @@ void main() {
 
         self.vao_simple = self.ctx.vertex_array(
             self.program, [(self.vertex_buffer, "2f 4f", "in_vert", "in_color")]
+        )
+
+        # Create text VAO
+        self.text_vao = self.ctx.vertex_array(
+            self.text_program,
+            [
+                (
+                    self.text_vertex_buffer,
+                    "2f 2f 4f",
+                    "in_vert",
+                    "in_texcoord",
+                    "in_color",
+                )
+            ],
         )
 
         # Batching data structures
@@ -146,6 +217,9 @@ void main() {
         )  # Vertices for indexed rendering
         self.triangle_indices = np.empty(0, dtype=np.uint32)  # Triangle indices
         self.line_indices = np.empty(0, dtype=np.uint32)  # Line indices
+
+        # Text rendering data
+        self.text_render_queue = []  # List of (vertices, texture) pairs
 
         self.vertex_count = 0  # Track current vertex count for indexing
 
@@ -221,8 +295,8 @@ void main() {
         v3 = self.add_indexed_vertex(*rect.p4.unpack())
 
         if rect.filled:
-            # Two triangles for filled rectangle: (v0,v1,v3) and (v1,v2,v3)
-            triangle_indices = np.array([v0, v1, v3, v1, v2, v3], dtype=np.uint32)
+            # Two triangles for filled rectangle: (v0,v1,v2) and (v0,v2,v3)
+            triangle_indices = np.array([v0, v1, v2, v0, v2, v3], dtype=np.uint32)
             self.add_triangle_indices(triangle_indices)
         else:
             # Four lines for rectangle outline: v0->v1, v1->v2, v2->v3, v3->v0
@@ -230,7 +304,7 @@ void main() {
             self.add_line_indices(line_indices)
 
     def draw_circle(self, circle: Circle):
-        """Draw a circle using simple rendering (could be optimized with indexed rendering later)"""
+        """Draw a circle using simple rendering"""
         center = circle.center.data
         radius = circle.radius
         color = circle.color
@@ -260,6 +334,9 @@ void main() {
         self.line_indices = self.line_indices[:0]
         self.vertex_count = 0
 
+        # Clear text render queue
+        self.text_render_queue.clear()
+
         if self.fbo:
             self.fbo.use()
 
@@ -270,23 +347,40 @@ void main() {
             # Upload vertex data
             self.vertex_buffer.write(self.indexed_vertices.tobytes())
 
-            # Render triangles with indices
-            if self.triangle_indices.size > 0:
-                self.index_buffer_gl.write(self.triangle_indices.tobytes())
-                self.vao_indexed.render(
-                    moderngl.TRIANGLES,  # pylint: disable=no-member
-                    vertices=len(self.indexed_vertices),
-                    instances=1,
+            # Combine triangle and line indices into a single buffer
+            all_indices = (
+                np.concatenate([self.triangle_indices, self.line_indices])
+                if self.triangle_indices.size > 0 and self.line_indices.size > 0
+                else (
+                    self.triangle_indices
+                    if self.triangle_indices.size > 0
+                    else self.line_indices
                 )
+            )
 
-            # Render lines with indices
-            if self.line_indices.size > 0:
-                self.index_buffer_gl.write(self.line_indices.tobytes())
-                self.vao_indexed.render(
-                    moderngl.LINES,  # pylint: disable=no-member
-                    vertices=len(self.indexed_vertices),
-                    instances=1,
-                )
+            if all_indices.size > 0:
+                self.index_buffer_gl.write(all_indices.tobytes())
+
+                # Render triangles with indices
+                if self.triangle_indices.size > 0:
+                    triangle_count = len(self.triangle_indices)
+                    self.vao_indexed.render(
+                        moderngl.TRIANGLES,  # pylint: disable=no-member
+                        vertices=triangle_count,
+                        first=0,
+                        instances=1,
+                    )
+
+                # Render lines with indices (offset by triangle count)
+                if self.line_indices.size > 0:
+                    line_count = len(self.line_indices)
+                    line_offset = len(self.triangle_indices)
+                    self.vao_indexed.render(
+                        moderngl.LINES,  # pylint: disable=no-member
+                        vertices=line_count,
+                        first=line_offset,
+                        instances=1,
+                    )
 
         # Render simple geometry (triangles and lines without indices)
         total_simple_vertices = len(self.triangle_vertices) + len(self.line_vertices)
@@ -315,6 +409,91 @@ void main() {
                     vertices=line_count,
                     first=line_start,
                 )
+
+        # Render text
+        self.flush_text()
+
+    def flush_text(self):
+        """Render all batched text"""
+        if not self.text_render_queue:
+            return
+
+        # Render each character separately with its own texture
+        for vertices, texture in self.text_render_queue:
+            # Upload vertex data for this character
+            self.text_vertex_buffer.write(vertices.tobytes())
+
+            # Bind the character's texture
+            texture.use(0)
+
+            # Render the 6 vertices (2 triangles) for this character
+            self.text_vao.render(
+                moderngl.TRIANGLES,  # pylint: disable=no-member
+                vertices=6,
+            )
+
+    def add_text_quad(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        color: Color,
+        texture,
+    ):
+        """Add a textured quad for text rendering"""
+        r, g, b, a = color.as_normalized()
+
+        # UV coordinates are (0,0) to (1,1) for the full texture
+        vertices = np.array(
+            [
+                # First triangle
+                [x, y, 0.0, 0.0, r, g, b, a],  # Top-left
+                [x + width, y, 1.0, 0.0, r, g, b, a],  # Top-right
+                [x, y + height, 0.0, 1.0, r, g, b, a],  # Bottom-left
+                # Second triangle
+                [x + width, y, 1.0, 0.0, r, g, b, a],  # Top-right
+                [x + width, y + height, 1.0, 1.0, r, g, b, a],  # Bottom-right
+                [x, y + height, 0.0, 1.0, r, g, b, a],  # Bottom-left
+            ],
+            dtype=np.float32,
+        )
+
+        # Add to render queue with its texture
+        self.text_render_queue.append((vertices, texture))
+
+    def draw_text(self, text: str, position: Vec2, color: Color, font_size: int = 16):
+        """Draw text at the specified position"""
+        if font_size != self.font_renderer.font_size:
+            # Create new font renderer for different size
+            self.font_renderer = FontRenderer(self.ctx, font_size)
+
+        x, y = position.x, position.y
+
+        for char in text:
+            if char == " ":
+                # Handle space character
+                x += font_size * 0.5
+                continue
+
+            if char == "\n":
+                # Handle newline
+                y += font_size * 1.2
+                x = position.x
+                continue
+
+            texture, metrics = self.font_renderer.get_char_texture(char)
+
+            char_x = x + metrics["offset_x"]
+            char_y = y + metrics["offset_y"]
+            char_width = metrics["width"]
+            char_height = metrics["height"]
+
+            # Add textured quad for this character
+            self.add_text_quad(char_x, char_y, char_width, char_height, color, texture)
+
+            # Advance cursor
+            x += metrics["advance"]
 
     def display(self):
         """Present the rendered frame"""
@@ -370,6 +549,17 @@ void main() {
         if hasattr(self, "fbo") and self.fbo:
             self.fbo.release()
 
+        # Clean up text resources
+        if hasattr(self, "text_vertex_buffer"):
+            self.text_vertex_buffer.release()
+        if hasattr(self, "text_vao"):
+            self.text_vao.release()
+        if hasattr(self, "text_program"):
+            self.text_program.release()
+        if hasattr(self, "font_renderer"):
+            for texture in self.font_renderer.char_textures.values():
+                texture.release()
+
         # Clean up GLFW
         if self.window:
             glfw.destroy_window(self.window)
@@ -419,6 +609,10 @@ class Graphics:
             self.graphics_context.draw_circle(shape)
         else:
             raise ValueError("Unsupported shape type")
+
+    def draw_text(self, text: str, position: Vec2, color: Color, font_size: int = 16):
+        """Draw text at the given position"""
+        self.graphics_context.draw_text(text, position, color, font_size)
 
     def display(self):
         """Display the frame"""

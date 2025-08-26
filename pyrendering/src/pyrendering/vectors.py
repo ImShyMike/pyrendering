@@ -40,6 +40,9 @@ class Vec2:
         length = self.length()
         return Vec2(*(self.data / length)) if length > 0 else Vec2(0, 0)
 
+    def unpack(self):
+        return self.data[0], self.data[1]
+
 
 @dataclass
 class Point:
