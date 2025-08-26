@@ -14,6 +14,13 @@ from pyrendering.shapes import Circle, Rect
 NUM_VERTICES = 10000
 
 
+class DrawMode:
+    """Vertex types"""
+
+    TRIANGLE = 0
+    LINE = 1
+
+
 class GraphicsContext:
     """Graphics context handler"""
 
@@ -57,6 +64,9 @@ class GraphicsContext:
         # Enable blending for transparency
         self.ctx.enable(moderngl.BLEND)  # pylint: disable=no-member
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA  # pylint: disable=no-member
+
+        # Set the viewport
+        self.ctx.viewport = (0, 0, width, height)
 
         # Create shader program
         self.program = self.ctx.program(
@@ -106,7 +116,9 @@ void main() {
         )
 
         # Vertex data for current frame
-        self.vertices = []
+        self.draw_mode = DrawMode.TRIANGLE
+        self.triangle_vertices = []
+        self.line_vertices = []
 
         # Create framebuffer for offscreen rendering if needed
         if standalone:
@@ -127,15 +139,22 @@ void main() {
         ndc_y = -((y / self.height) * 2.0 - 1.0)  # flip Y
         return ndc_x, ndc_y
 
-    def add_vertex(self, x: float, y: float, color: Color):
+    def add_vertex(
+        self, x: float, y: float, color: Color
+    ):
         """Add a vertex to the batch"""
         r, g, b = color.as_rgb_normalized()
-        self.vertices.extend([x, y, r, g, b])
+        if self.draw_mode == DrawMode.TRIANGLE:
+            self.triangle_vertices.extend([x, y, r, g, b])
+        elif self.draw_mode == DrawMode.LINE:
+            self.line_vertices.extend([x, y, r, g, b])
 
     def draw_rect(self, rect: Rect, color: Color, filled: bool = True):
         """Draw a rectangle"""
         if filled:
             # Add vertices for filled rectangle (2 triangles)
+            self.draw_mode = DrawMode.TRIANGLE
+
             # Triangle 1
             self.add_vertex(rect.x, rect.y, color)
             self.add_vertex(rect.x + rect.width, rect.y, color)
@@ -147,6 +166,8 @@ void main() {
             self.add_vertex(rect.x, rect.y + rect.height, color)
         else:
             # Add vertices for rectangle outline (lines)
+            self.draw_mode = DrawMode.LINE
+
             # Top line
             self.add_vertex(rect.x, rect.y, color)
             self.add_vertex(rect.x + rect.width, rect.y, color)
@@ -168,6 +189,8 @@ void main() {
         center_x, center_y = circle.center.x, circle.center.y
         radius = circle.radius
 
+        self.draw_mode = DrawMode.TRIANGLE
+
         # Generate triangles from center to perimeter
         for i in range(segments):
             angle1 = 2 * math.pi * i / segments
@@ -188,29 +211,43 @@ void main() {
 
     def begin_frame(self):
         """Begin a new frame"""
-        self.vertices.clear()
+        self.triangle_vertices.clear()
+        self.line_vertices.clear()
         if self.fbo:
             self.fbo.use()
 
     def flush(self):
         """Render all batched geometry"""
-        if not self.vertices:
+        if not self.triangle_vertices and not self.line_vertices:
             return
 
-        # Convert to numpy array and upload to GPU
-        vertex_data = np.array(self.vertices, dtype=np.float32)
-        self.vertex_buffer.write(vertex_data.tobytes())
+        # Convert triangle vertices to numpy array and upload to GPU
+        if self.triangle_vertices:
+            triangle_vertex_data = np.array(self.triangle_vertices, dtype=np.float32)
+            self.vertex_buffer.write(triangle_vertex_data.tobytes())
 
-        # Draw triangles for filled shapes and lines for wireframes
-        num_vertices = len(self.vertices) // 5
+            # Calculate the number of triangle vertices
+            triangle_num_vertices = len(self.triangle_vertices) // 5
 
-        # Render the vertices
-        if num_vertices >= 3:
-            self.ctx.viewport = (0, 0, self.width, self.height)
-            self.vao.render(vertices=num_vertices)
+            # Render triangles
+            if triangle_num_vertices >= 3:  # At least 3 vertices, render as triangles
+                self.vao.render(moderngl.TRIANGLES, vertices=triangle_num_vertices)
 
-        # Clear vertex buffer for next frame
-        self.vertices.clear()
+        # Convert line vertices to numpy array and upload to GPU
+        if self.line_vertices:
+            line_vertex_data = np.array(self.line_vertices, dtype=np.float32)
+            self.vertex_buffer.write(line_vertex_data.tobytes())
+
+            # Calculate the number of line vertices
+            line_num_vertices = len(self.line_vertices) // 5
+
+            # Render lines
+            if line_num_vertices >= 2:
+                self.vao.render(moderngl.LINES, vertices=line_num_vertices)  # pylint: disable=no-member
+
+        # Clear vertex buffers for next frame
+        self.triangle_vertices.clear()
+        self.line_vertices.clear()
 
     def display(self):
         """Present the rendered frame"""
