@@ -44,7 +44,7 @@ def main():
         )
     )
 
-    def _on_mouse_button(button, xpos, ypos, action, mods):
+    def _on_mouse_button(button, _xpos, _ypos, action, _mods):
         nonlocal current_mouse_status
         if button == 0:
             current_mouse_status = action
