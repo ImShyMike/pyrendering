@@ -1,7 +1,7 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
 import time
-from typing import Literal, Optional, Tuple, cast
+from typing import Callable, Literal, Optional, Tuple, cast
 
 import glfw
 import moderngl
@@ -20,7 +20,25 @@ DrawModes = Literal["fill", "wireframe", "points"]
 def framebuffer_size_callback(window, width, height):
     graphics_ctx = glfw.get_window_user_pointer(window)
     if graphics_ctx:
-        graphics_ctx.resize(width, height)
+        graphics_ctx.on_resize(width, height)
+
+
+def key_callback(window, key, scancode, action, mods):
+    graphics_ctx = glfw.get_window_user_pointer(window)
+    if graphics_ctx:
+        graphics_ctx.on_key(key, scancode, action, mods)
+
+
+def mouse_button_callback(window, button, action, mods):
+    graphics_ctx = glfw.get_window_user_pointer(window)
+    if graphics_ctx:
+        graphics_ctx.on_mouse_button(button, action, mods)
+
+
+def cursor_position_callback(window, xpos, ypos):
+    graphics_ctx = glfw.get_window_user_pointer(window)
+    if graphics_ctx:
+        graphics_ctx.on_mouse_move(xpos, ypos)
 
 
 class DrawMode:
@@ -88,6 +106,11 @@ class GraphicsContext:
 
             # Register resize callback
             glfw.set_framebuffer_size_callback(self.window, framebuffer_size_callback)
+
+            # Register input callbacks
+            glfw.set_key_callback(self.window, key_callback)
+            glfw.set_mouse_button_callback(self.window, mouse_button_callback)
+            glfw.set_cursor_pos_callback(self.window, cursor_position_callback)
 
             # Create ModernGL context from current OpenGL context
             self.ctx = moderngl.create_context()
@@ -255,6 +278,23 @@ void main() {
         else:
             self.fbo = None
 
+        # Callbacks
+        self.key_callback = None
+        self.mouse_button_callback = None
+        self.mouse_move_callback = None
+
+    def set_key_callback(self, callback: Callable):
+        """Set key event callback"""
+        self.key_callback = callback
+
+    def set_mouse_button_callback(self, callback: Callable):
+        """Set mouse button event callback"""
+        self.mouse_button_callback = callback
+
+    def set_mouse_move_callback(self, callback: Callable):
+        """Set mouse move event callback"""
+        self.mouse_move_callback = callback
+
     def update_shader_uniforms(self, width: int, height: int):
         """Update shader uniforms with new resolution"""
         u_resolution = cast(moderngl.Uniform, self.program["u_resolution"])
@@ -263,7 +303,7 @@ void main() {
         text_u_resolution = cast(moderngl.Uniform, self.text_program["u_resolution"])
         text_u_resolution.value = (float(width), float(height))
 
-    def resize(self, width: int, height: int):
+    def on_resize(self, width: int, height: int):
         """Handle window resize based on resize_mode"""
 
         if self.resize_mode == "ignore":
@@ -302,6 +342,68 @@ void main() {
             self.fbo = self.ctx.framebuffer(
                 color_attachments=[self.ctx.texture((width, height), 4)]
             )
+
+    def on_key(self, key, scancode, action, mods):
+        """Handle key events"""
+        if self.key_callback and callable(self.key_callback):
+            self.key_callback(key, scancode, action, mods)
+
+    def on_mouse_button(self, button, action, mods):
+        """Handle mouse button events"""
+        # Make sure the mouse is actually inside the window
+        xpos, ypos = glfw.get_cursor_pos(self.window)
+        if self.window and self.resize_mode == "letterbox":
+            viewport = self.ctx.viewport
+            if not (
+                viewport[0] <= xpos <= viewport[0] + viewport[2]
+                and viewport[1] <= ypos <= viewport[1] + viewport[3]
+            ):
+                return
+
+        if self.resize_mode == "letterbox":
+            viewport = self.ctx.viewport
+
+            # Adjust for aspect ratio difference
+            original_aspect = self.original_width / self.original_height
+            current_aspect = viewport[2] / viewport[3]
+            if current_aspect > original_aspect:
+                scale = viewport[3] / self.original_height
+            else:
+                scale = viewport[2] / self.original_width
+
+            xpos = int((xpos - viewport[0]) / scale)
+            ypos = int((ypos - viewport[1]) / scale)
+
+        if self.mouse_button_callback and callable(self.mouse_button_callback):
+            self.mouse_button_callback(button, xpos, ypos, action, mods)
+
+    def on_mouse_move(self, xpos: int, ypos: int):
+        """Handle mouse movement events"""
+        # Make sure the mouse is actually inside the window
+        if self.window and self.resize_mode == "letterbox":
+            viewport = self.ctx.viewport
+            if not (
+                viewport[0] <= xpos <= viewport[0] + viewport[2]
+                and viewport[1] <= ypos <= viewport[1] + viewport[3]
+            ):
+                return
+
+        if self.resize_mode == "letterbox":
+            viewport = self.ctx.viewport
+
+            # Adjust for aspect ratio difference
+            original_aspect = self.original_width / self.original_height
+            current_aspect = viewport[2] / viewport[3]
+            if current_aspect > original_aspect:
+                scale = viewport[3] / self.original_height
+            else:
+                scale = viewport[2] / self.original_width
+
+            xpos = int((xpos - viewport[0]) / scale)
+            ypos = int((ypos - viewport[1]) / scale)
+
+        if self.mouse_move_callback and callable(self.mouse_move_callback):
+            self.mouse_move_callback(xpos, ypos)
 
     def clear(self, color: Color):
         """Clear the screen with a color"""
@@ -788,6 +890,33 @@ class Graphics:
         self.graphics_context = GraphicsContext(
             width, height, title, standalone, vsync, resize_mode
         )
+
+    def set_key_callback(self, callback: Callable):
+        """Set key event callback
+
+        Args:
+            callback (Callable): Callback function with signature \
+                (key: int, scancode: int, action: int, mods: int) -> None
+        """
+        self.graphics_context.set_key_callback(callback)
+
+    def set_mouse_button_callback(self, callback: Callable):
+        """Set mouse button event callback
+        
+        Args:
+            callback (Callable): Callback function with signature \
+                (button: int, xpos: float, ypos: float, action: int, mods: int) -> None
+        """
+        self.graphics_context.set_mouse_button_callback(callback)
+
+    def set_mouse_move_callback(self, callback: Callable):
+        """Set mouse move event callback
+        
+        Args:
+            callback (Callable): Callback function with signature \
+                (xpos: float, ypos: float) -> None
+        """
+        self.graphics_context.set_mouse_move_callback(callback)
 
     def get_monitor_mode(self) -> Tuple[int, int, int]:
         """Get the current monitor mode

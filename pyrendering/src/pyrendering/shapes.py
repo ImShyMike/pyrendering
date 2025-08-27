@@ -24,22 +24,15 @@ class Rect(Shape):
     def __contains__(self, point: Vec2) -> bool:
         return self.contains_point(point)
 
-    @classmethod
+    @staticmethod
     def from_dimensions(
-        cls,
-        x: float,
-        y: float,
-        width: float,
-        height: float,
-        color: Color = Color(),
+        x: float, y: float, width: float, height: float, color: Color = Color()
     ):
-        if color is None:
-            color = Color()
-        return cls(
+        return Rect(
             Point(Vec2(x, y), color),
             Point(Vec2(x + width, y), color),
             Point(Vec2(x + width, y + height), color),
-            Point(Vec2(x, y + height), color)
+            Point(Vec2(x, y + height), color),
         )
 
     @property

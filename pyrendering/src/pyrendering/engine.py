@@ -1,13 +1,26 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 import numpy as np
 
 from pyrendering.graphics import DrawModes, Graphics
-from pyrendering.shapes import Rect, Shape, Triangle
+from pyrendering.shapes import Circle, Rect, Shape, Triangle
 from pyrendering.vectors import Vec2
+
+
+class StatusCode(Enum):
+    """Status codes for engine operations"""
+
+    SUCCESS = 0
+    FAILURE = 1
+    NOT_FOUND = 2
+    INVALID_OPERATION = 3
+
+    def __bool__(self):
+        return self == StatusCode.SUCCESS
 
 
 @dataclass
@@ -116,7 +129,7 @@ class Engine:
 
     def rotate_shape(
         self, shape_id: str, angle: float, center: Optional[Vec2] = None
-    ) -> bool:
+    ) -> StatusCode:
         """Rotate a shape around a center by a given angle in radians
 
         Args:
@@ -126,11 +139,11 @@ class Engine:
                 If None, uses the shape's center. Defaults to None.
 
         Returns:
-            bool: Success status
+            StatusCode: Success status
         """
         mode_shape = self.get_shape(shape_id)
         if mode_shape is None:
-            return False
+            return StatusCode.NOT_FOUND
 
         _, shape = mode_shape
 
@@ -153,7 +166,7 @@ class Engine:
                 shape.p4.position = Engine.rotate_point(
                     shape.p4.position, center, cos_a, sin_a
                 )
-                return True
+                return StatusCode.SUCCESS
 
             if isinstance(shape, Triangle):
                 if not center:
@@ -170,10 +183,11 @@ class Engine:
                 shape.p3.position = Engine.rotate_point(
                     shape.p3.position, center, cos_a, sin_a
                 )
-                return True
-        return False
+                return StatusCode.SUCCESS
 
-    def translate_shape(self, shape_id: str, offset: Vec2) -> bool:
+        return StatusCode.INVALID_OPERATION
+
+    def translate_shape(self, shape_id: str, offset: Vec2) -> StatusCode:
         """Translate a shape by a given offset
 
         Args:
@@ -181,11 +195,11 @@ class Engine:
             offset (Vec2): Offset vector.
 
         Returns:
-            bool: Success status
+            StatusCode: Success status
         """
         mode_shape = self.get_shape(shape_id)
         if mode_shape is None:
-            return False
+            return StatusCode.NOT_FOUND
 
         _, shape = mode_shape
 
@@ -195,16 +209,21 @@ class Engine:
                 shape.p2.position += offset
                 shape.p3.position += offset
                 shape.p4.position += offset
-                return True
+                return StatusCode.SUCCESS
 
             if isinstance(shape, Triangle):
                 shape.p1.position += offset
                 shape.p2.position += offset
                 shape.p3.position += offset
-                return True
-        return False
+                return StatusCode.SUCCESS
 
-    def move_shape_to(self, shape_id: str, position: Vec2) -> bool:
+            if isinstance(shape, Circle):
+                shape.center += offset
+                return StatusCode.SUCCESS
+
+        return StatusCode.INVALID_OPERATION
+
+    def move_shape_to(self, shape_id: str, position: Vec2) -> StatusCode:
         """Move a shape to a specific position by translating its center to that position
 
         Args:
@@ -212,11 +231,11 @@ class Engine:
             position (Vec2): Position to move the shape's center to.
 
         Returns:
-            bool: Success status
+            StatusCode: Success status
         """
         mode_shape = self.get_shape(shape_id)
         if mode_shape is None:
-            return False
+            return StatusCode.NOT_FOUND
 
         _, shape = mode_shape
 
@@ -233,9 +252,15 @@ class Engine:
                 )
                 offset = position - center
                 return self.translate_shape(shape_id, offset)
-        return False
 
-    def update_shape(self, shape_id: str, new_shape: Shape) -> bool:
+            if isinstance(shape, Circle):
+                offset = position - shape.center
+                shape.center += offset
+                return StatusCode.SUCCESS
+
+        return StatusCode.INVALID_OPERATION
+
+    def update_shape(self, shape_id: str, new_shape: Shape) -> StatusCode:
         """Update an existing shape with a new shape
 
         Args:
@@ -243,12 +268,93 @@ class Engine:
             new_shape (Shape): New shape to replace the old one.
 
         Returns:
-            bool: Success status
+            StatusCode: Success status
         """
         mode_shape = self.get_shape(shape_id)
         if mode_shape is None:
-            return False
+            return StatusCode.NOT_FOUND
 
         draw_mode, _ = mode_shape
         self.shapes[shape_id] = (draw_mode, new_shape)
-        return True
+        return StatusCode.SUCCESS
+
+    def update_shape_color(self, shape_id: str, new_color) -> StatusCode:
+        """Update the color of an existing shape
+
+        Args:
+            shape_id (str): Shape ID.
+            new_color (Color): New color.
+
+        Returns:
+            StatusCode: Success status
+        """
+        mode_shape = self.get_shape(shape_id)
+        if mode_shape is None:
+            return StatusCode.NOT_FOUND
+
+        _, shape = mode_shape
+
+        if isinstance(shape, Shape):
+            if isinstance(shape, Rect):
+                shape.p1.color = new_color
+                shape.p2.color = new_color
+                shape.p3.color = new_color
+                shape.p4.color = new_color
+                return StatusCode.SUCCESS
+
+            if isinstance(shape, Triangle):
+                shape.p1.color = new_color
+                shape.p2.color = new_color
+                shape.p3.color = new_color
+                return StatusCode.SUCCESS
+
+            if isinstance(shape, Circle):
+                shape.color = new_color
+                return StatusCode.SUCCESS
+
+        return StatusCode.INVALID_OPERATION
+
+    def update_shape_mode(self, shape_id: str, new_mode: DrawModes) -> StatusCode:
+        """Update the draw mode of an existing shape
+
+        Args:
+            shape_id (str): Shape ID.
+            new_mode (DrawModes): New draw mode.
+
+        Returns:
+            StatusCode: Success status
+        """
+        mode_shape = self.get_shape(shape_id)
+        if mode_shape is None:
+            return StatusCode.NOT_FOUND
+
+        _, shape = mode_shape
+        self.shapes[shape_id] = (new_mode, shape)
+        return StatusCode.SUCCESS
+
+    def shape_count(self) -> int:
+        """Get the number of shapes managed by the engine
+
+        Returns:
+            int: Number of shapes
+        """
+        return len(self.shapes)
+
+    def list_shape_ids(self):
+        """List all shape IDs managed by the engine
+
+        Returns:
+            List[str]: List of shape IDs
+        """
+        return list(self.shapes.keys())
+
+    def shape_exists(self, shape_id: str) -> bool:
+        """Check if a shape exists by its ID
+
+        Args:
+            shape_id (str): Shape ID.
+
+        Returns:
+            bool: True if the shape exists, False otherwise
+        """
+        return shape_id in self.shapes

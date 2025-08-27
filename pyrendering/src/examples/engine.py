@@ -2,7 +2,7 @@
 
 import traceback
 
-from pyrendering import Color, Engine, Graphics, Point, Rect, Triangle, Vec2
+from pyrendering import Circle, Color, Engine, Graphics, Point, Rect, Triangle, Vec2
 
 
 def main():
@@ -30,8 +30,30 @@ def main():
         draw_mode="fill",
     )
 
+    cursor_circle_id = engine.add_shape(
+        Circle(Vec2(0, 0), 10, Color.from_hex("#ffffff")), draw_mode="fill"
+    )
+
     triangle_position = 400
     direction = 1
+    current_mouse_status = 0
+
+    gfx.set_key_callback(
+        lambda key, scancode, action, mods: print(
+            f"Key event - key: {key}, scancode: {scancode}, action: {action}, mods: {mods}"
+        )
+    )
+
+    def _on_mouse_button(button, xpos, ypos, action, mods):
+        nonlocal current_mouse_status
+        if button == 0:
+            current_mouse_status = action
+
+    gfx.set_mouse_button_callback(_on_mouse_button)
+
+    gfx.set_mouse_move_callback(
+        lambda xpos, ypos: engine.move_shape_to(cursor_circle_id, Vec2(xpos, ypos))
+    )
 
     try:
         # Run until window closes
@@ -57,6 +79,12 @@ def main():
 
             # Move triangle to new position
             engine.move_shape_to(triangle_id, Vec2(triangle_position, 400))
+
+            # Change color based on mouse click status
+            if current_mouse_status == 1:
+                engine.update_shape_color(cursor_circle_id, Color.from_hex("#ff0000"))
+            else:
+                engine.update_shape_color(cursor_circle_id, Color.from_hex("#ffffff"))
 
             engine.render()
 
