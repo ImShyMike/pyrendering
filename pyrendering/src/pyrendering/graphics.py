@@ -117,6 +117,7 @@ class GraphicsContext:
             glfw.set_key_callback(self.window, key_callback)
             glfw.set_mouse_button_callback(self.window, mouse_button_callback)
             glfw.set_cursor_pos_callback(self.window, cursor_position_callback)
+            glfw.set_scroll_callback(self.window, scroll_callback)
 
             # Create ModernGL context from current OpenGL context
             self.ctx = moderngl.create_context()

@@ -34,6 +34,11 @@ def main():
         Circle(Vec2(0, 0), 10, Color.from_hex("#ffffff")), draw_mode="fill"
     )
 
+    rect2_id = engine.add_shape(
+        Rect.from_dimensions(100, 100, 50, 50, Color.from_hex("#00ff00")),
+        draw_mode="fill",
+    )
+
     triangle_position = 400
     direction = 1
     current_mouse_status = 0
@@ -54,6 +59,11 @@ def main():
     gfx.set_mouse_move_callback(
         lambda xpos, ypos: engine.move_shape_to(cursor_circle_id, Vec2(xpos, ypos))
     )
+
+    def _on_scroll(xoffset, yoffset, _xpos, _ypos):
+        engine.translate_shape(rect2_id, Vec2(-xoffset * 10, -yoffset * 10))
+
+    gfx.set_scroll_callback(_on_scroll)
 
     try:
         # Run until window closes
