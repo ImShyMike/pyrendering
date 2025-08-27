@@ -306,7 +306,13 @@ void main() {
     def clear(self, color: Color):
         """Clear the screen with a color"""
         normalized = color.as_normalized()
-        self.ctx.clear(normalized[0], normalized[1], normalized[2], normalized[3])
+        self.ctx.clear(
+            normalized[0],
+            normalized[1],
+            normalized[2],
+            normalized[3],
+            viewport=self.ctx.viewport,
+        )
 
     def screen_to_ndc(self, x: float, y: float) -> Tuple[float, float]:
         """Convert screen coordinates to normalized device coordinates"""
