@@ -1,7 +1,7 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
 import time
-from typing import Optional, Tuple, cast
+from typing import Literal, Optional, Tuple, cast
 
 import glfw
 import moderngl
@@ -12,6 +12,14 @@ from pyrendering.font import FontManager, FontRenderer
 from pyrendering.shapes import Circle, Rect, Shape, Triangle, Vec2
 
 NUM_VERTICES = 10000
+
+ResizeModes = Literal["stretch", "letterbox", "ignore"]
+
+
+def framebuffer_size_callback(window, width, height):
+    graphics_ctx = glfw.get_window_user_pointer(window)
+    if graphics_ctx:
+        graphics_ctx.resize(width, height)
 
 
 class DrawMode:
@@ -31,11 +39,15 @@ class GraphicsContext:
         title: str = "pyrendering",
         standalone: bool = False,
         vsync: bool = True,
+        resize_mode: ResizeModes = "stretch",
     ):
         self.width = width
         self.height = height
+        self.original_width = width
+        self.original_height = height
         self.title = title
         self.window = None
+        self.resize_mode = resize_mode
         self.last_time = time.time()
 
         if standalone:
@@ -68,6 +80,12 @@ class GraphicsContext:
 
             # Enable multisampling
             glfw.window_hint(glfw.SAMPLES, 4)  # Request 4x multisampling
+
+            # Set this instance as the window's user pointer so the callback can access it
+            glfw.set_window_user_pointer(self.window, self)
+
+            # Register resize callback
+            glfw.set_framebuffer_size_callback(self.window, framebuffer_size_callback)
 
             # Create ModernGL context from current OpenGL context
             self.ctx = moderngl.create_context()
@@ -232,6 +250,54 @@ void main() {
             )
         else:
             self.fbo = None
+
+    def update_shader_uniforms(self, width: int, height: int):
+        """Update shader uniforms with new resolution"""
+        u_resolution = cast(moderngl.Uniform, self.program["u_resolution"])
+        u_resolution.value = (float(width), float(height))
+
+        text_u_resolution = cast(moderngl.Uniform, self.text_program["u_resolution"])
+        text_u_resolution.value = (float(width), float(height))
+
+    def resize(self, width: int, height: int):
+        """Handle window resize based on resize_mode"""
+
+        if self.resize_mode == "ignore":
+            return
+
+        if self.resize_mode == "letterbox":
+            original_aspect = self.original_width / self.original_height
+            new_aspect = width / height
+
+            if new_aspect > original_aspect:
+                viewport_height = height
+                viewport_width = int(height * original_aspect)
+                viewport_x = (width - viewport_width) // 2
+                viewport_y = 0
+            else:
+                viewport_width = width
+                viewport_height = int(width / original_aspect)
+                viewport_x = 0
+                viewport_y = (height - viewport_height) // 2
+
+            self.ctx.viewport = (
+                viewport_x,
+                viewport_y,
+                viewport_width,
+                viewport_height,
+            )
+
+        else:  # "stretch" mode (default)
+            self.width = width
+            self.height = height
+            self.ctx.viewport = (0, 0, width, height)
+            self.update_shader_uniforms(width, height)
+
+        if self.fbo:
+            self.fbo.release()
+            self.fbo = self.ctx.framebuffer(
+                color_attachments=[self.ctx.texture((width, height), 4)]
+            )
 
     def clear(self, color: Color):
         """Clear the screen with a color"""
@@ -585,8 +651,11 @@ class Graphics:
         title: str = "Graphics",
         standalone: bool = False,
         vsync: bool = True,
+        resize_mode: ResizeModes = "stretch",
     ):
-        self.graphics_context = GraphicsContext(width, height, title, standalone, vsync)
+        self.graphics_context = GraphicsContext(
+            width, height, title, standalone, vsync, resize_mode
+        )
 
     def get_monitor_mode(self) -> Tuple[int, int, int]:
         """Get the current monitor mode (width, height, refresh rate)"""
@@ -617,7 +686,7 @@ class Graphics:
         elif isinstance(shape, Circle):
             self.graphics_context.draw_circle(shape)
         else:
-            raise ValueError("Unsupported shape type")
+            raise ValueError(f"Unsupported shape type: {shape}")
 
     def draw_text(
         self,
