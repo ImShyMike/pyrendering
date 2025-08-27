@@ -20,7 +20,6 @@ class Rect(Shape):
     p2: Point
     p3: Point
     p4: Point
-    filled: bool = True
 
     def __contains__(self, point: Vec2) -> bool:
         return self.contains_point(point)
@@ -33,7 +32,6 @@ class Rect(Shape):
         width: float,
         height: float,
         color: Color = Color(),
-        filled: bool = True,
     ):
         if color is None:
             color = Color()
@@ -41,8 +39,7 @@ class Rect(Shape):
             Point(Vec2(x, y), color),
             Point(Vec2(x + width, y), color),
             Point(Vec2(x + width, y + height), color),
-            Point(Vec2(x, y + height), color),
-            filled,
+            Point(Vec2(x, y + height), color)
         )
 
     @property
@@ -143,7 +140,6 @@ class Triangle(Shape):
     p1: Point
     p2: Point
     p3: Point
-    filled: bool = True
 
     def __contains__(self, point: Vec2) -> bool:
         return self.contains_point(point)

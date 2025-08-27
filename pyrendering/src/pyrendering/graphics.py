@@ -14,6 +14,7 @@ from pyrendering.shapes import Circle, Rect, Shape, Triangle, Vec2
 NUM_VERTICES = 10000
 
 ResizeModes = Literal["stretch", "letterbox", "ignore"]
+DrawModes = Literal["fill", "wireframe", "points"]
 
 
 def framebuffer_size_callback(window, width, height):
@@ -27,6 +28,7 @@ class DrawMode:
 
     TRIANGLE = 0
     LINE = 1
+    POINT = 2
 
 
 class GraphicsContext:
@@ -228,6 +230,7 @@ void main() {
             (0, 6), dtype=np.float32
         )  # Non-indexed triangles
         self.line_vertices = np.empty((0, 6), dtype=np.float32)  # Non-indexed lines
+        self.point_vertices = np.empty((0, 6), dtype=np.float32)  # Non-indexed points
 
         # Indexed rendering data structures
         self.indexed_vertices = np.empty(
@@ -235,6 +238,7 @@ void main() {
         )  # Vertices for indexed rendering
         self.triangle_indices = np.empty(0, dtype=np.uint32)  # Triangle indices
         self.line_indices = np.empty(0, dtype=np.uint32)  # Line indices
+        self.point_indices = np.empty(0, dtype=np.uint32)  # Point indices
 
         # Text rendering data
         self.text_render_queue = []  # List of (vertices, texture) pairs
@@ -325,6 +329,8 @@ void main() {
             self.triangle_vertices = np.append(self.triangle_vertices, [vertex], axis=0)
         elif draw_mode == DrawMode.LINE:
             self.line_vertices = np.append(self.line_vertices, [vertex], axis=0)
+        elif draw_mode == DrawMode.POINT:
+            self.point_vertices = np.append(self.point_vertices, [vertex], axis=0)
 
     def add_indexed_vertex(self, x: float, y: float, color: Color) -> int:
         """Add a vertex for indexed rendering and return its index"""
@@ -346,6 +352,10 @@ void main() {
         """Add line indices for indexed rendering"""
         self.line_indices = np.append(self.line_indices, indices.astype(np.uint32))
 
+    def add_point_indices(self, indices: np.ndarray):
+        """Add point indices for indexed rendering"""
+        self.point_indices = np.append(self.point_indices, indices.astype(np.uint32))
+
     def draw_triangle(self, triangle: Triangle):
         """Draw a triangle using simple rendering"""
         p1, p2, p3 = triangle.p1, triangle.p2, triangle.p3
@@ -353,6 +363,23 @@ void main() {
         self.add_vertex_simple(p1.x, p1.y, p1.color, DrawMode.TRIANGLE)
         self.add_vertex_simple(p2.x, p2.y, p2.color, DrawMode.TRIANGLE)
         self.add_vertex_simple(p3.x, p3.y, p3.color, DrawMode.TRIANGLE)
+
+    def draw_triangle_wireframe(self, triangle: Triangle):
+        """Draw a triangle as wireframe using line mode"""
+        p1, p2, p3 = triangle.p1, triangle.p2, triangle.p3
+
+        # Draw three lines forming the triangle
+        self.draw_line(p1.x, p1.y, p2.x, p2.y, p1.color)
+        self.draw_line(p2.x, p2.y, p3.x, p3.y, p2.color)
+        self.draw_line(p3.x, p3.y, p1.x, p1.y, p3.color)
+
+    def draw_triangle_points(self, triangle: Triangle):
+        """Draw a triangle as points using point mode"""
+        p1, p2, p3 = triangle.p1, triangle.p2, triangle.p3
+
+        self.draw_point(p1.x, p1.y, p1.color)
+        self.draw_point(p2.x, p2.y, p2.color)
+        self.draw_point(p3.x, p3.y, p3.color)
 
     def draw_rect(self, rect: Rect):
         """Draw a rectangle using efficient indexed rendering"""
@@ -362,14 +389,36 @@ void main() {
         v2 = self.add_indexed_vertex(*rect.p3.unpack())
         v3 = self.add_indexed_vertex(*rect.p4.unpack())
 
-        if rect.filled:
-            # Two triangles for filled rectangle: (v0,v1,v2) and (v0,v2,v3)
-            triangle_indices = np.array([v0, v1, v2, v0, v2, v3], dtype=np.uint32)
-            self.add_triangle_indices(triangle_indices)
-        else:
-            # Four lines for rectangle outline: v0->v1, v1->v2, v2->v3, v3->v0
-            line_indices = np.array([v0, v1, v1, v2, v2, v3, v3, v0], dtype=np.uint32)
-            self.add_line_indices(line_indices)
+        # Two triangles for filled rectangle: (v0,v1,v2) and (v0,v2,v3)
+        triangle_indices = np.array([v0, v1, v2, v0, v2, v3], dtype=np.uint32)
+        self.add_triangle_indices(triangle_indices)
+
+    def draw_rect_wireframe(self, rect: Rect):
+        """Draw a rectangle as wireframe using line mode"""
+        v0 = self.add_indexed_vertex(*rect.p1.unpack())
+        v1 = self.add_indexed_vertex(*rect.p2.unpack())
+        v2 = self.add_indexed_vertex(*rect.p3.unpack())
+        v3 = self.add_indexed_vertex(*rect.p4.unpack())
+
+        # Four lines for rectangle outline: v0->v1, v1->v2, v2->v3, v3->v0
+        line_indices = np.array([v0, v1, v1, v2, v2, v3, v3, v0], dtype=np.uint32)
+        self.add_line_indices(line_indices)
+
+    def draw_rect_points(self, rect: Rect):
+        """Draw a rectangle as points using point mode"""
+        self.draw_point(rect.p1.x, rect.p1.y, rect.p1.color)
+        self.draw_point(rect.p2.x, rect.p2.y, rect.p2.color)
+        self.draw_point(rect.p3.x, rect.p3.y, rect.p3.color)
+        self.draw_point(rect.p4.x, rect.p4.y, rect.p4.color)
+
+    def draw_line(self, x1: float, y1: float, x2: float, y2: float, color: Color):
+        """Draw a line between two points"""
+        self.add_vertex_simple(x1, y1, color, DrawMode.LINE)
+        self.add_vertex_simple(x2, y2, color, DrawMode.LINE)
+
+    def draw_point(self, x: float, y: float, color: Color):
+        """Draw a single point"""
+        self.add_vertex_simple(x, y, color, DrawMode.POINT)
 
     def draw_circle(self, circle: Circle):
         """Draw a circle using simple rendering"""
@@ -392,14 +441,51 @@ void main() {
             self.add_vertex_simple(v1[0], v1[1], color, DrawMode.TRIANGLE)
             self.add_vertex_simple(v2[0], v2[1], color, DrawMode.TRIANGLE)
 
+    def draw_circle_wireframe(self, circle: Circle):
+        """Draw a circle as wireframe using line mode"""
+        center = circle.center.data
+        radius = circle.radius
+        color = circle.color
+        segments = circle.segments
+
+        # Generate angles for the circle
+        angles = np.linspace(0, 2 * np.pi, segments, endpoint=False)
+        offsets = np.stack((np.cos(angles), np.sin(angles)), axis=1) * radius
+
+        # Create line segments for the circle outline
+        for i in range(segments):
+            v1 = center + offsets[i]
+            v2 = center + offsets[(i + 1) % segments]
+
+            self.add_vertex_simple(v1[0], v1[1], color, DrawMode.LINE)
+            self.add_vertex_simple(v2[0], v2[1], color, DrawMode.LINE)
+
+    def draw_circle_points(self, circle: Circle):
+        """Draw a circle as points using point mode"""
+        center = circle.center.data
+        radius = circle.radius
+        color = circle.color
+        segments = circle.segments
+
+        # Generate angles for the circle
+        angles = np.linspace(0, 2 * np.pi, segments, endpoint=False)
+        offsets = np.stack((np.cos(angles), np.sin(angles)), axis=1) * radius
+
+        # Add circumference points
+        for offset in offsets:
+            point = center + offset
+            self.add_vertex_simple(point[0], point[1], color, DrawMode.POINT)
+
     def begin_frame(self):
         """Begin a new frame"""
         # Clear all vertex data
         self.triangle_vertices = self.triangle_vertices[:0]
         self.line_vertices = self.line_vertices[:0]
+        self.point_vertices = self.point_vertices[:0]
         self.indexed_vertices = self.indexed_vertices[:0]
         self.triangle_indices = self.triangle_indices[:0]
         self.line_indices = self.line_indices[:0]
+        self.point_indices = self.point_indices[:0]
         self.vertex_count = 0
 
         # Clear text render queue
@@ -415,19 +501,20 @@ void main() {
             # Upload vertex data
             self.vertex_buffer.write(self.indexed_vertices.tobytes())
 
-            # Combine triangle and line indices into a single buffer
-            all_indices = (
-                np.concatenate([self.triangle_indices, self.line_indices])
-                if self.triangle_indices.size > 0 and self.line_indices.size > 0
-                else (
-                    self.triangle_indices
-                    if self.triangle_indices.size > 0
-                    else self.line_indices
-                )
-            )
+            # Combine all indices into a single buffer
+            all_indices = []
+            if self.triangle_indices.size > 0:
+                all_indices.append(self.triangle_indices)
+            if self.line_indices.size > 0:
+                all_indices.append(self.line_indices)
+            if self.point_indices.size > 0:
+                all_indices.append(self.point_indices)
 
-            if all_indices.size > 0:
-                self.index_buffer_gl.write(all_indices.tobytes())
+            if all_indices:
+                combined_indices = np.concatenate(all_indices)
+                self.index_buffer_gl.write(combined_indices.tobytes())
+
+                current_offset = 0
 
                 # Render triangles with indices
                 if self.triangle_indices.size > 0:
@@ -435,29 +522,52 @@ void main() {
                     self.vao_indexed.render(
                         moderngl.TRIANGLES,  # pylint: disable=no-member
                         vertices=triangle_count,
-                        first=0,
+                        first=current_offset,
                         instances=1,
                     )
+                    current_offset += triangle_count
 
-                # Render lines with indices (offset by triangle count)
+                # Render lines with indices
                 if self.line_indices.size > 0:
                     line_count = len(self.line_indices)
-                    line_offset = len(self.triangle_indices)
                     self.vao_indexed.render(
                         moderngl.LINES,  # pylint: disable=no-member
                         vertices=line_count,
-                        first=line_offset,
+                        first=current_offset,
+                        instances=1,
+                    )
+                    current_offset += line_count
+
+                # Render points with indices
+                if self.point_indices.size > 0:
+                    point_count = len(self.point_indices)
+                    self.vao_indexed.render(
+                        moderngl.POINTS,  # pylint: disable=no-member
+                        vertices=point_count,
+                        first=current_offset,
                         instances=1,
                     )
 
-        # Render simple geometry (triangles and lines without indices)
-        total_simple_vertices = len(self.triangle_vertices) + len(self.line_vertices)
+        # Render simple geometry (triangles, lines, and points without indices)
+        total_simple_vertices = (
+            len(self.triangle_vertices)
+            + len(self.line_vertices)
+            + len(self.point_vertices)
+        )
         if total_simple_vertices > 0:
             # Combine all simple vertices
-            all_simple_vertices = np.concatenate(
-                [self.triangle_vertices, self.line_vertices]
-            )
-            self.vertex_buffer.write(all_simple_vertices.tobytes())
+            all_simple_vertices = []
+            if len(self.triangle_vertices) > 0:
+                all_simple_vertices.append(self.triangle_vertices)
+            if len(self.line_vertices) > 0:
+                all_simple_vertices.append(self.line_vertices)
+            if len(self.point_vertices) > 0:
+                all_simple_vertices.append(self.point_vertices)
+
+            combined_vertices = np.concatenate(all_simple_vertices)
+            self.vertex_buffer.write(combined_vertices.tobytes())
+
+            current_start = 0
 
             # Render triangles
             if len(self.triangle_vertices) > 0:
@@ -465,17 +575,27 @@ void main() {
                 self.vao_simple.render(
                     moderngl.TRIANGLES,  # pylint: disable=no-member
                     vertices=triangle_count,
-                    first=0,
+                    first=current_start,
                 )
+                current_start += triangle_count
 
             # Render lines
             if len(self.line_vertices) > 0:
                 line_count = len(self.line_vertices)
-                line_start = len(self.triangle_vertices)
                 self.vao_simple.render(
                     moderngl.LINES,  # pylint: disable=no-member
                     vertices=line_count,
-                    first=line_start,
+                    first=current_start,
+                )
+                current_start += line_count
+
+            # Render points
+            if len(self.point_vertices) > 0:
+                point_count = len(self.point_vertices)
+                self.vao_simple.render(
+                    moderngl.POINTS,  # pylint: disable=no-member
+                    vertices=point_count,
+                    first=current_start,
                 )
 
         # Render text
@@ -677,14 +797,40 @@ class Graphics:
         """Clear the screen"""
         self.graphics_context.clear(color)
 
-    def draw(self, shape: Shape):
-        """Draw a shape"""
+    def draw(self, shape: Shape, draw_mode: DrawModes = "fill"):
+        """Draw a shape with different draw modes
+
+        Args:
+            shape: The shape to draw
+            draw_mode: "fill", "wireframe", or "points"
+        """
         if isinstance(shape, Triangle):
-            self.graphics_context.draw_triangle(shape)
+            if draw_mode == "fill":
+                self.graphics_context.draw_triangle(shape)
+            elif draw_mode == "wireframe":
+                self.graphics_context.draw_triangle_wireframe(shape)
+            elif draw_mode == "points":
+                self.graphics_context.draw_triangle_points(shape)
+            else:
+                raise ValueError(f"Unsupported draw mode: {draw_mode}")
         elif isinstance(shape, Rect):
-            self.graphics_context.draw_rect(shape)
+            if draw_mode == "fill":
+                self.graphics_context.draw_rect(shape)
+            elif draw_mode == "wireframe":
+                self.graphics_context.draw_rect_wireframe(shape)
+            elif draw_mode == "points":
+                self.graphics_context.draw_rect_points(shape)
+            else:
+                raise ValueError(f"Unsupported draw mode: {draw_mode}")
         elif isinstance(shape, Circle):
-            self.graphics_context.draw_circle(shape)
+            if draw_mode == "fill":
+                self.graphics_context.draw_circle(shape)
+            elif draw_mode == "wireframe":
+                self.graphics_context.draw_circle_wireframe(shape)
+            elif draw_mode == "points":
+                self.graphics_context.draw_circle_points(shape)
+            else:
+                raise ValueError(f"Unsupported draw mode: {draw_mode}")
         else:
             raise ValueError(f"Unsupported shape type: {shape}")
 

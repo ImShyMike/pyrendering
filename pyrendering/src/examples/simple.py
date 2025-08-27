@@ -40,8 +40,8 @@ def main():
             # Draw a white outline rectangle
             gfx.draw(
                 Rect.from_dimensions(
-                    350, 100, 150, 100, Color.from_hex("#ffffff"), False
-                )
+                    350, 100, 150, 100, Color.from_hex("#ffffff")
+                ), draw_mode="wireframe"
             )
 
             # Draw an RGB triangle
@@ -60,7 +60,6 @@ def main():
                     Point(Vec2(700, 100), semi_transparent_green),
                     Point(Vec2(700, 200), semi_transparent_red),
                     Point(Vec2(600, 200), semi_transparent_red),
-                    True,
                 )
             )
 
@@ -71,7 +70,6 @@ def main():
                     Point(Vec2(250, 150), green),
                     Point(Vec2(300, 250), green),
                     Point(Vec2(100, 250), green),
-                    True,
                 )
             )
 

@@ -8,14 +8,26 @@ from pyrendering import Circle, Color, Engine, Graphics, Point, Rect, Triangle, 
 def main():
     """Testest"""
 
-    gfx = Graphics(800, 600, "My Game", standalone=False, vsync=True, resize_mode="letterbox")
+    gfx = Graphics(
+        800, 600, "My Game", standalone=False, vsync=True, resize_mode="letterbox"
+    )
     engine = Engine(gfx)
 
     current_fps = 0
     time_since_last_fps_update = 0.5
 
     rect_id = engine.add_shape(
-        Rect.from_dimensions(350, 100, 150, 100, Color.from_hex("#ca2353"), True)
+        Rect.from_dimensions(350, 100, 150, 100, Color.from_hex("#ca2353")),
+        draw_mode="wireframe",
+    )
+
+    engine.add_shape(
+        Triangle(
+            Point(Vec2(400, 400), Color.from_rgb(255, 0, 0)),
+            Point(Vec2(500, 300), Color.from_rgb(0, 255, 0)),
+            Point(Vec2(300, 300), Color.from_rgb(0, 0, 255)),
+        ),
+        draw_mode="fill",
     )
 
     try:

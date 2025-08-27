@@ -57,7 +57,6 @@ def main():
                     Point(Vec2(*rotated_vertices[1]), semi_transparent_red),
                     Point(Vec2(*rotated_vertices[2]), semi_transparent_red),
                     Point(Vec2(*rotated_vertices[3]), semi_transparent_red),
-                    True,
                 )
             )
 
@@ -67,7 +66,6 @@ def main():
                     Point(Vec2(100, 200), semi_transparent_red),
                     Point(Vec2(200, 200), semi_transparent_red),
                     Point(Vec2(200, 100), semi_transparent_red),
-                    True,
                 )
             )
 

@@ -1,13 +1,25 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 
 from pyrendering.color import Color
-from pyrendering.graphics import Graphics, GraphicsContext
+from pyrendering.graphics import DrawModes, Graphics
 from pyrendering.shapes import Circle, Rect, Shape, Triangle
 from pyrendering.vectors import Vec2, Vec3
+
+
+@dataclass
+class ModeShape:
+    """Helper dataclass to store mode and shape together"""
+
+    mode: DrawModes
+    shape: Shape
+
+    def __iter__(self):
+        return iter((self.mode, self.shape))
 
 
 class Engine:
@@ -18,14 +30,19 @@ class Engine:
         self.shapes = {}
         self.shape_id_counter = 0
 
-    def add_shape(self, shape: Shape, shape_id: Optional[str] = None) -> str:
+    def add_shape(
+        self,
+        shape: Shape,
+        draw_mode: DrawModes = "fill",
+        shape_id: Optional[str] = None,
+    ) -> str:
         if shape_id is None:
             shape_id = str(self.shape_id_counter)
-        self.shapes[shape_id] = shape
+        self.shapes[shape_id] = (draw_mode, shape)
         self.shape_id_counter += 1
         return shape_id
 
-    def get_shape(self, shape_id: str) -> Optional[Shape]:
+    def get_shape(self, shape_id: str) -> Optional[ModeShape]:
         return self.shapes.get(shape_id, None)
 
     def remove_shape(self, shape_id: str):
@@ -33,8 +50,8 @@ class Engine:
             del self.shapes[shape_id]
 
     def render(self):
-        for shape in self.shapes.values():
-            self.gfx.draw(shape)
+        for draw_mode, shape in self.shapes.values():
+            self.gfx.draw(shape, draw_mode=draw_mode)
 
     def clear(self):
         self.shapes.clear()
@@ -48,10 +65,14 @@ class Engine:
         )
         return rotated + center
 
-    def rotate_shape(self, shape_id: str, angle: float, center: Optional[Vec2] = None) -> bool:
-        shape = self.get_shape(shape_id)
-        if shape is None:
+    def rotate_shape(
+        self, shape_id: str, angle: float, center: Optional[Vec2] = None
+    ) -> bool:
+        mode_shape = self.get_shape(shape_id)
+        if mode_shape is None:
             return False
+
+        _, shape = mode_shape
 
         cos_a = np.cos(angle)
         sin_a = np.sin(angle)
