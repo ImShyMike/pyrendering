@@ -9,9 +9,9 @@ def main():
     """Testest"""
 
     # Initialize graphics
-    gfx = Graphics(800, 600, "My Game", standalone=False, vsync=True)
+    gfx = Graphics(800, 600, "My Game", standalone=False, vsync=False)
     frame_count = 0
-    target_fps = gfx.get_monitor_mode()[2] or 60  # Vscync refresh rate or 60
+    current_fps = 1
 
     try:
         # Run until window closes
@@ -33,16 +33,16 @@ def main():
                 24,
             )
             gfx.draw_text(
-                "Frame: " + str(frame_count),
+                "FPS: " + str(current_fps),
                 Vec2(0, 0),
                 Color.from_rgb(0, 255, 0),
                 16,
             )
 
-            gfx.display()
+            if frame_count % current_fps == 0:
+                current_fps = int(1 / delta_time)
 
-            if frame_count % target_fps == 0:  # Print data every second
-                print(f"Frame {frame_count} rendered. FPS: {(1 / delta_time):.2f}")
+            gfx.display()
 
     except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"Error during rendering: {e}")
