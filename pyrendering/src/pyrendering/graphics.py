@@ -1,14 +1,14 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
 import time
-from typing import Tuple, cast
+from typing import Optional, Tuple, cast
 
 import glfw
 import moderngl
 import numpy as np
 
 from pyrendering.color import Color
-from pyrendering.font import FontRenderer
+from pyrendering.font import FontManager, FontRenderer
 from pyrendering.shapes import Circle, Rect, Shape, Triangle, Vec2
 
 NUM_VERTICES = 10000
@@ -220,6 +220,8 @@ void main() {
 
         # Text rendering data
         self.text_render_queue = []  # List of (vertices, texture) pairs
+
+        self.font_manager = FontManager()
 
         self.vertex_count = 0  # Track current vertex count for indexing
 
@@ -462,11 +464,18 @@ void main() {
         # Add to render queue with its texture
         self.text_render_queue.append((vertices, texture))
 
-    def draw_text(self, text: str, position: Vec2, color: Color, font_size: int = 16):
+    def draw_text(
+        self,
+        text: str,
+        position: Vec2,
+        color: Color,
+        font_size: int = 16,
+        font_path: Optional[str] = None,
+    ):
         """Draw text at the specified position"""
-        if font_size != self.font_renderer.font_size:
-            # Create new font renderer for different size
-            self.font_renderer = FontRenderer(self.ctx, font_size)
+        self.font_renderer = self.font_manager.get_font_renderer(
+            self.ctx, font_size, font_path
+        )
 
         x, y = position.x, position.y
 
@@ -610,9 +619,16 @@ class Graphics:
         else:
             raise ValueError("Unsupported shape type")
 
-    def draw_text(self, text: str, position: Vec2, color: Color, font_size: int = 16):
+    def draw_text(
+        self,
+        text: str,
+        position: Vec2,
+        color: Color,
+        font_size: int = 16,
+        font_path: Optional[str] = None,
+    ):
         """Draw text at the given position"""
-        self.graphics_context.draw_text(text, position, color, font_size)
+        self.graphics_context.draw_text(text, position, color, font_size, font_path)
 
     def display(self):
         """Display the frame"""

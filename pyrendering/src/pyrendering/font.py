@@ -5,6 +5,21 @@ from typing import Optional
 from PIL import Image, ImageDraw, ImageFont
 
 
+class FontManager:
+    """Manages multiple font renderers"""
+
+    def __init__(self):
+        self.font_renderers = {}
+
+    def get_font_renderer(
+        self, ctx, font_size: int = 16, font_path: Optional[str] = None
+    ):
+        key = (font_size, font_path)
+        if key not in self.font_renderers:
+            self.font_renderers[key] = FontRenderer(ctx, font_size, font_path)
+        return self.font_renderers[key]
+
+
 class FontRenderer:
     """Handles font rendering and texture atlas generation"""
 
@@ -29,7 +44,7 @@ class FontRenderer:
 
     def get_char_texture(self, char: str):
         """Get or create texture for a character"""
-        if char in self.char_textures:
+        if char in self.char_metrics:
             return self.char_textures[char], self.char_metrics[char]
 
         # Create a temporary image to measure the character
@@ -75,7 +90,7 @@ class FontRenderer:
             "height": char_height,
             "advance": advance + 1,  # Character spacing
             "offset_x": 0,
-            "offset_y": 0
+            "offset_y": 0,
         }
 
         self.char_textures[char] = texture
