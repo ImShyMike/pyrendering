@@ -2,7 +2,7 @@
 
 import traceback
 
-from pyrendering import Circle, Color, Engine, Graphics, Point, Rect, Triangle, Vec2
+from pyrendering import Color, Engine, Graphics, Point, Rect, Triangle, Vec2
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
         draw_mode="wireframe",
     )
 
-    engine.add_shape(
+    triangle_id = engine.add_shape(
         Triangle(
             Point(Vec2(400, 400), Color.from_rgb(255, 0, 0)),
             Point(Vec2(500, 300), Color.from_rgb(0, 255, 0)),
@@ -30,10 +30,13 @@ def main():
         draw_mode="fill",
     )
 
+    triangle_position = 400
+    direction = 1
+
     try:
         # Run until window closes
         while not gfx.should_close():
-            delta_time = gfx.vsync_tick()
+            delta_time = gfx.tick()
             time_since_last_fps_update += delta_time
 
             gfx.poll_events()
@@ -42,6 +45,18 @@ def main():
             gfx.clear(Color.from_hex("#1a1a2e"))  # Dark blue background
 
             engine.rotate_shape(rect_id, delta_time)
+
+            # Update triangle position
+            triangle_position = engine.lerp(
+                triangle_position, triangle_position + direction * 100, delta_time
+            )
+
+            # Reverse direction if limits are reached
+            if triangle_position >= 500 or triangle_position <= 300:
+                direction *= -1
+
+            # Move triangle to new position
+            engine.move_shape_to(triangle_id, Vec2(triangle_position, 400))
 
             engine.render()
 

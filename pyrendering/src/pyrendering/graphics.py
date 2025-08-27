@@ -701,20 +701,15 @@ void main() {
         """Cap frame rate and return delta time in seconds"""
         now = time.time()
         elapsed = now - self.last_time
-        target_frame_time = 1.0 / target_fps if target_fps > 0 else 0.0
 
-        if target_frame_time > 0.0 and elapsed < target_frame_time:
-            time.sleep(target_frame_time - elapsed)
-            now = time.time()
-            elapsed = now - self.last_time
+        if target_fps != 0:
+            target_frame_time = 1.0 / target_fps if target_fps > 0 else 0.0
 
-        self.last_time = now
-        return elapsed
+            if target_frame_time > 0.0 and elapsed < target_frame_time:
+                time.sleep(target_frame_time - elapsed)
+                now = time.time()
+                elapsed = now - self.last_time
 
-    def vsync_tick(self) -> float:
-        """Update timing with vsync enabled"""
-        now = time.time()
-        elapsed = now - self.last_time
         self.last_time = now
         return elapsed
 
@@ -773,16 +768,35 @@ class Graphics:
         vsync: bool = True,
         resize_mode: ResizeModes = "stretch",
     ):
+        """Graphics handler
+
+        Args:
+            width (int, optional): Window width. Defaults to 800.
+            height (int, optional): Window height. Defaults to 600.
+            title (str, optional): Window title. Defaults to "Graphics".
+            standalone (bool, optional): Standalone mode (no window). Defaults to False.
+            vsync (bool, optional): Use vsync. Defaults to True.
+            resize_mode (ResizeModes, optional): Resize mode. \
+                Can be "stretch", "letterbox", or "ignore". Defaults to "stretch".
+        """
         self.graphics_context = GraphicsContext(
             width, height, title, standalone, vsync, resize_mode
         )
 
     def get_monitor_mode(self) -> Tuple[int, int, int]:
-        """Get the current monitor mode (width, height, refresh rate)"""
+        """Get the current monitor mode
+
+        Returns:
+            Tuple[int, int, int]: Monitor mode (width, height, refresh rate)
+        """
         return self.graphics_context.get_monitor_mode()
 
     def should_close(self) -> bool:
-        """Check if the window should close"""
+        """Check if the window should close
+
+        Returns:
+            bool: Should close
+        """
         return self.graphics_context.should_close()
 
     def poll_events(self):
@@ -794,15 +808,24 @@ class Graphics:
         self.graphics_context.begin_frame()
 
     def clear(self, color: Color):
-        """Clear the screen"""
+        """Clear the screen with a color
+
+        Args:
+            color (Color): Color to clear the screen with
+        """
         self.graphics_context.clear(color)
 
     def draw(self, shape: Shape, draw_mode: DrawModes = "fill"):
-        """Draw a shape with different draw modes
+        """Draw a shape with the specified draw mode
 
         Args:
-            shape: The shape to draw
-            draw_mode: "fill", "wireframe", or "points"
+            shape (Shape): Shape to draw
+            draw_mode (DrawModes, optional): Draw mode. \
+                Can be "fill", "wireframe", or "points". Defaults to "fill".
+
+        Raises:
+            ValueError: Unsupported shape type
+            ValueError: Unsupported draw mode
         """
         if isinstance(shape, Triangle):
             if draw_mode == "fill":
@@ -842,20 +865,31 @@ class Graphics:
         font_size: int = 16,
         font_path: Optional[str] = None,
     ):
-        """Draw text at the given position"""
+        """Draw text at the specified position
+
+        Args:
+            text (str): The text to draw
+            position (Vec2): Position to draw the text
+            color (Color): Color of the text
+            font_size (int, optional): Font size. Defaults to 16.
+            font_path (Optional[str], optional): Font path. None for default font. Defaults to None.
+        """
         self.graphics_context.draw_text(text, position, color, font_size, font_path)
 
     def display(self):
         """Display the frame"""
         self.graphics_context.display()
 
-    def tick(self, target_fps: float) -> float:
-        """Cap frame rate and return delta time in seconds"""
-        return self.graphics_context.tick(target_fps)
+    def tick(self, target_fps: float = 0) -> float:
+        """Cap frame rate and return delta time in seconds
 
-    def vsync_tick(self) -> float:
-        """Return delta time without a frame cap"""
-        return self.graphics_context.vsync_tick()
+        Args:
+            target_fps (float, optional): Target frames per second. 0 for uncapped. Defaults to 0.
+
+        Returns:
+            float: Delta time in seconds
+        """
+        return self.graphics_context.tick(target_fps)
 
     def cleanup(self):
         """Clean up resources"""

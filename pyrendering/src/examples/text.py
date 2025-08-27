@@ -16,8 +16,7 @@ def main():
     try:
         # Run until window closes
         while not gfx.should_close():
-            # vsync_tick() does not limit fps, it just returns the delta time
-            delta_time = gfx.vsync_tick()
+            delta_time = gfx.tick()
 
             frame_count += 1
 
