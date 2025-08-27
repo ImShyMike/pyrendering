@@ -41,6 +41,12 @@ def cursor_position_callback(window, xpos, ypos):
         graphics_ctx.on_mouse_move(xpos, ypos)
 
 
+def scroll_callback(window, xoffset, yoffset):
+    graphics_ctx = glfw.get_window_user_pointer(window)
+    if graphics_ctx:
+        graphics_ctx.on_scroll(xoffset, yoffset)
+
+
 class DrawMode:
     """Vertex types"""
 
@@ -282,6 +288,7 @@ void main() {
         self.key_callback = None
         self.mouse_button_callback = None
         self.mouse_move_callback = None
+        self.scroll_callback = None
 
     def set_key_callback(self, callback: Callable):
         """Set key event callback"""
@@ -294,6 +301,10 @@ void main() {
     def set_mouse_move_callback(self, callback: Callable):
         """Set mouse move event callback"""
         self.mouse_move_callback = callback
+
+    def set_scroll_callback(self, callback: Callable):
+        """Set scroll event callback"""
+        self.scroll_callback = callback
 
     def update_shader_uniforms(self, width: int, height: int):
         """Update shader uniforms with new resolution"""
@@ -404,6 +415,21 @@ void main() {
 
         if self.mouse_move_callback and callable(self.mouse_move_callback):
             self.mouse_move_callback(xpos, ypos)
+
+    def on_scroll(self, xoffset: float, yoffset: float):
+        """Handle scroll events"""
+        # Make sure the mouse is actually inside the window
+        xpos, ypos = glfw.get_cursor_pos(self.window)
+        if self.window and self.resize_mode == "letterbox":
+            viewport = self.ctx.viewport
+            if not (
+                viewport[0] <= xpos <= viewport[0] + viewport[2]
+                and viewport[1] <= ypos <= viewport[1] + viewport[3]
+            ):
+                return
+
+        if self.scroll_callback and callable(self.scroll_callback):
+            self.scroll_callback(xoffset, yoffset, xpos, ypos)
 
     def clear(self, color: Color):
         """Clear the screen with a color"""
@@ -917,6 +943,15 @@ class Graphics:
                 (xpos: float, ypos: float) -> None
         """
         self.graphics_context.set_mouse_move_callback(callback)
+
+    def set_scroll_callback(self, callback: Callable):
+        """Set scroll event callback
+        
+        Args:
+            callback (Callable): Callback function with signature \
+                (xoffset: float, yoffset: float, xpos: float, ypos: float) -> None
+        """
+        self.graphics_context.set_scroll_callback(callback)
 
     def get_monitor_mode(self) -> Tuple[int, int, int]:
         """Get the current monitor mode
