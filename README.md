@@ -20,7 +20,8 @@ Examples can be found in the [examples directory](./pyrendering/src/examples) an
 
 ## Video demo
 
-![Video demo](./assets/demo_video.webm)
+![Video demo mp4](./assets/demo_video.mp4)
+![Video demo gif](./assets/demo_video.gif)
 
 ## License
 
