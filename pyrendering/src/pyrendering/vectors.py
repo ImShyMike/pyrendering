@@ -43,6 +43,9 @@ class Vec2:
     def unpack(self):
         return self.data[0], self.data[1]
 
+    def to_point(self, color: Color = Color()) -> "Point":
+        return Point(self, color)
+
 
 @dataclass
 class Point:

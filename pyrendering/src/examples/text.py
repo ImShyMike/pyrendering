@@ -6,10 +6,10 @@ from pyrendering import Color, Graphics, Vec2
 
 
 def main():
-    """Testest"""
+    """Text rendering example"""
 
     # Initialize graphics
-    gfx = Graphics(800, 600, "My Game", standalone=False, vsync=False)
+    gfx = Graphics(800, 600, "Text demo", standalone=False, vsync=False)
     frame_count = 0
     current_fps = 1
 

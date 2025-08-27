@@ -1,8 +1,11 @@
 # pylint: disable=missing-function-docstring,missing-module-docstring
 
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
 
 import numpy as np
+from PIL import Image
 
 from pyrendering.color import Color
 from pyrendering.vectors import Point, Vec2
@@ -172,3 +175,57 @@ class Triangle(Shape):
         b3 = sign(point, self.p3, self.p1) < 0.0
 
         return b1 == b2 == b3
+
+
+@dataclass
+class Texture(Shape):
+    """Texture class"""
+
+    v1: Vec2
+    v2: Vec2
+    v3: Vec2
+    v4: Vec2
+    path: Path
+    color: Color = field(default_factory=Color)
+    _texture: Optional[object] = field(default=None, init=False)
+
+    def __post_init__(self):
+        if not self.path.exists() or not self.path.is_file():
+            raise FileNotFoundError(f"Texture file not found: {self.path}")
+
+    def load_texture(self, ctx):
+        """Load the texture if not already loaded"""
+        if not self._texture:
+            try:
+                img = Image.open(self.path)
+                if img.mode != "RGBA":
+                    img = img.convert("RGBA")
+
+                # Create texture
+                self._texture = ctx.texture(img.size, 4)
+                self._texture.write(img.tobytes())  # type: ignore
+                img.close()
+            except Exception as e:
+                print(f"Error loading texture {self.path}: {e}")
+                raise RuntimeError(f"Failed to load texture {self.path}: {e}") from e
+
+        return self._texture
+
+    @staticmethod
+    def from_path(
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        path: Path,
+        color: Color = Color(),
+    ) -> "Texture":
+        """Create a texture rectangle from dimensions and path"""
+        return Texture(
+            Vec2(x, y),
+            Vec2(x + width, y),
+            Vec2(x + width, y + height),
+            Vec2(x, y + height),
+            color=color,
+            path=path,
+        )

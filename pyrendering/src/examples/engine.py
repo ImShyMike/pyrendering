@@ -6,10 +6,10 @@ from pyrendering import Circle, Color, Engine, Graphics, Point, Rect, Triangle, 
 
 
 def main():
-    """Testest"""
+    """Engine example"""
 
     gfx = Graphics(
-        800, 600, "My Game", standalone=False, vsync=True, resize_mode="letterbox"
+        800, 600, "Engine demo", standalone=False, vsync=True, resize_mode="letterbox"
     )
     engine = Engine(gfx)
 

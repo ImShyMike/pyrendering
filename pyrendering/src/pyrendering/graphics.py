@@ -9,7 +9,7 @@ import numpy as np
 
 from pyrendering.color import Color
 from pyrendering.font import FontManager, FontRenderer
-from pyrendering.shapes import Circle, Rect, Shape, Triangle, Vec2
+from pyrendering.shapes import Circle, Rect, Shape, Texture, Triangle, Vec2
 
 NUM_VERTICES = 10000
 
@@ -207,6 +207,45 @@ void main() {
 """,
         )
 
+        # Create texture shader program for textures
+        self.texture_program = self.ctx.program(
+            vertex_shader="""
+#version 330
+
+in vec2 in_vert;
+in vec2 in_texcoord;
+in vec4 in_color;
+
+out vec2 v_texcoord;
+out vec4 v_color;
+
+uniform vec2 u_resolution;
+
+void main() {
+    vec2 position = ((in_vert / u_resolution) * 2.0) - 1.0;
+    position.y = -position.y;
+    
+    v_texcoord = in_texcoord;
+    v_color = in_color;
+    gl_Position = vec4(position, 0.0, 1.0);
+}
+""",
+            fragment_shader="""
+#version 330
+
+in vec2 v_texcoord;
+in vec4 v_color;
+out vec4 fragColor;
+
+uniform sampler2D u_texture;
+
+void main() {
+    vec4 texColor = texture(u_texture, v_texcoord);
+    fragColor = texColor * v_color;
+}
+""",
+        )
+
         # Set resolution uniform
         u_resolution = cast(moderngl.Uniform, self.program["u_resolution"])
         u_resolution.value = (float(width), float(height))
@@ -214,6 +253,20 @@ void main() {
         # Set resolution uniform for text shader
         text_u_resolution = cast(moderngl.Uniform, self.text_program["u_resolution"])
         text_u_resolution.value = (float(width), float(height))
+
+        # Set texture uniform for text shader
+        text_u_texture = cast(moderngl.Uniform, self.text_program["u_texture"])
+        text_u_texture.value = 0
+
+        # Set resolution uniform for texture shader
+        texture_u_resolution = cast(
+            moderngl.Uniform, self.texture_program["u_resolution"]
+        )
+        texture_u_resolution.value = (float(width), float(height))
+
+        # Set texture uniform for texture shader
+        texture_u_texture = cast(moderngl.Uniform, self.texture_program["u_texture"])
+        texture_u_texture.value = 0
 
         # Create vertex buffer for batched rendering
         self.vertex_buffer = self.ctx.buffer(
@@ -255,6 +308,20 @@ void main() {
             ],
         )
 
+        # Create texture VAO
+        self.texture_vao = self.ctx.vertex_array(
+            self.texture_program,
+            [
+                (
+                    self.text_vertex_buffer,
+                    "2f 2f 4f",
+                    "in_vert",
+                    "in_texcoord",
+                    "in_color",
+                )
+            ],
+        )
+
         # Batching data structures
         self.triangle_vertices = np.empty(
             (0, 6), dtype=np.float32
@@ -272,6 +339,9 @@ void main() {
 
         # Text rendering data
         self.text_render_queue = []  # List of (vertices, texture) pairs
+
+        # Texture rendering data
+        self.texture_render_queue = []  # List of (vertices, texture) pairs
 
         self.font_manager = FontManager()
 
@@ -314,6 +384,11 @@ void main() {
 
         text_u_resolution = cast(moderngl.Uniform, self.text_program["u_resolution"])
         text_u_resolution.value = (float(width), float(height))
+
+        texture_u_resolution = cast(
+            moderngl.Uniform, self.texture_program["u_resolution"]
+        )
+        texture_u_resolution.value = (float(width), float(height))
 
     def on_resize(self, width: int, height: int):
         """Handle window resize based on resize_mode"""
@@ -611,6 +686,21 @@ void main() {
             point = center + offset
             self.add_vertex_simple(point[0], point[1], color, DrawMode.POINT)
 
+    def draw_texture(self, texture: Texture):
+        """Draw a texture mapped to an arbitrary quadrilateral"""
+        # Load the texture if not already loaded
+        gl_texture = texture.load_texture(self.ctx)
+
+        # Add textured quadrilateral for this texture
+        self.add_texture_quadrilateral(
+            texture.v1,
+            texture.v2,
+            texture.v3,
+            texture.v4,
+            gl_texture,
+            color=texture.color,
+        )
+
     def begin_frame(self):
         """Begin a new frame"""
         # Clear all vertex data
@@ -625,6 +715,9 @@ void main() {
 
         # Clear text render queue
         self.text_render_queue.clear()
+
+        # Clear texture render queue
+        self.texture_render_queue.clear()
 
         if self.fbo:
             self.fbo.use()
@@ -736,6 +829,9 @@ void main() {
         # Render text
         self.flush_text()
 
+        # Render textures
+        self.flush_textures()
+
     def flush_text(self):
         """Render all batched text"""
         if not self.text_render_queue:
@@ -751,6 +847,25 @@ void main() {
 
             # Render the 6 vertices (2 triangles) for this character
             self.text_vao.render(
+                moderngl.TRIANGLES,  # pylint: disable=no-member
+                vertices=6,
+            )
+
+    def flush_textures(self):
+        """Render all batched textures"""
+        if not self.texture_render_queue:
+            return
+
+        # Render each texture quad separately with its own texture
+        for vertices, texture in self.texture_render_queue:
+            # Upload vertex data for this quad
+            self.text_vertex_buffer.write(vertices.tobytes())
+
+            # Bind the texture
+            texture.use(0)
+
+            # Render the 6 vertices (2 triangles) for this quad
+            self.texture_vao.render(
                 moderngl.TRIANGLES,  # pylint: disable=no-member
                 vertices=6,
             )
@@ -784,6 +899,44 @@ void main() {
 
         # Add to render queue with its texture
         self.text_render_queue.append((vertices, texture))
+
+    def add_texture_quadrilateral(
+        self,
+        p1: Vec2,
+        p2: Vec2,
+        p3: Vec2,
+        p4: Vec2,
+        texture,
+        color: Color,
+    ):
+        """Add a textured quadrilateral for texture rendering on arbitrary shapes"""
+        r, g, b, a = color.as_normalized()
+
+        # Triangle 1: p1, p2, p3
+        vertices_triangle1 = np.array(
+            [
+                [p1.x, p1.y, 0.0, 0.0, r, g, b, a],  # p1 -> (0,0)
+                [p2.x, p2.y, 1.0, 0.0, r, g, b, a],  # p2 -> (1,0)
+                [p3.x, p3.y, 1.0, 1.0, r, g, b, a],  # p3 -> (1,1)
+            ],
+            dtype=np.float32,
+        )
+
+        # Triangle 2: p1, p3, p4
+        vertices_triangle2 = np.array(
+            [
+                [p1.x, p1.y, 0.0, 0.0, r, g, b, a],  # p1 -> (0,0)
+                [p3.x, p3.y, 1.0, 1.0, r, g, b, a],  # p3 -> (1,1)
+                [p4.x, p4.y, 0.0, 1.0, r, g, b, a],  # p4 -> (0,1)
+            ],
+            dtype=np.float32,
+        )
+
+        # Combine both triangles into one vertex array
+        vertices = np.concatenate([vertices_triangle1, vertices_triangle2])
+
+        # Add to render queue with its texture
+        self.texture_render_queue.append((vertices, texture))
 
     def draw_text(
         self,
@@ -881,6 +1034,10 @@ void main() {
             self.text_vao.release()
         if hasattr(self, "text_program"):
             self.text_program.release()
+        if hasattr(self, "texture_vao"):
+            self.texture_vao.release()
+        if hasattr(self, "texture_program"):
+            self.texture_program.release()
         if hasattr(self, "font_renderer"):
             for texture in self.font_renderer.char_textures.values():
                 texture.release()
@@ -997,6 +1154,7 @@ class Graphics:
         Raises:
             ValueError: Unsupported shape type
             ValueError: Unsupported draw mode
+            ValueError: Texture only supports 'fill' draw mode
         """
         if isinstance(shape, Triangle):
             if draw_mode == "fill":
@@ -1007,6 +1165,13 @@ class Graphics:
                 self.graphics_context.draw_triangle_points(shape)
             else:
                 raise ValueError(f"Unsupported draw mode: {draw_mode}")
+        elif isinstance(shape, Texture):
+            if draw_mode == "fill":
+                self.graphics_context.draw_texture(shape)
+            else:
+                raise ValueError(
+                    f"Texture only supports 'fill' draw mode, got: {draw_mode}"
+                )
         elif isinstance(shape, Rect):
             if draw_mode == "fill":
                 self.graphics_context.draw_rect(shape)

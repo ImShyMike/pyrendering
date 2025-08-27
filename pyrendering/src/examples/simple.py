@@ -6,10 +6,10 @@ from pyrendering import Circle, Color, Graphics, Point, Rect, Triangle, Vec2
 
 
 def main():
-    """Testest"""
+    """Simple example"""
 
     # Initialize graphics
-    gfx = Graphics(800, 600, "My Game", standalone=False, vsync=True)
+    gfx = Graphics(800, 600, "Simple geometry", standalone=False, vsync=True)
     frame_count = 0
     target_fps = gfx.get_monitor_mode()[2] or 60  # Vscync refresh rate or 60
 
