@@ -6,7 +6,8 @@ from typing import Optional
 
 import numpy as np
 
-from pyrendering.graphics import DrawModes, Graphics
+from pyrendering.context import DrawModes
+from pyrendering.graphics import Graphics
 from pyrendering.shapes import Circle, Rect, Shape, Triangle
 from pyrendering.vectors import Vec2
 
