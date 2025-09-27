@@ -38,9 +38,8 @@ def main():
 
             # Draw a white outline rectangle
             gfx.draw(
-                Rect.from_dimensions(
-                    350, 100, 150, 100, Color.from_hex("#ffffff")
-                ), draw_mode="wireframe"
+                Rect.from_dimensions(350, 100, 150, 100, Color.from_hex("#ffffff")),
+                draw_mode="wireframe",
             )
 
             # Draw an RGB triangle

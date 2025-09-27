@@ -72,10 +72,16 @@ class GraphicsContext:
         self.height = height
         self.original_width = width
         self.original_height = height
+        self.current_width = width
+        self.current_height = height
         self.title = title
         self.window = None
         self.resize_mode = resize_mode
         self.last_time = time.time()
+
+        if standalone:
+            self.framebuffer_width = width
+            self.framebuffer_height = height
 
         if standalone:
             # Create headless context
@@ -123,6 +129,16 @@ class GraphicsContext:
             # Create ModernGL context from current OpenGL context
             self.ctx = moderngl.create_context()
 
+            # Get window and framebuffer sizes
+            logical_width, logical_height = glfw.get_window_size(self.window)
+            framebuffer_width, framebuffer_height = glfw.get_framebuffer_size(
+                self.window
+            )
+            self.width = logical_width
+            self.height = logical_height
+            self.framebuffer_width = framebuffer_width
+            self.framebuffer_height = framebuffer_height
+
         # Initialize camera
         self.camera = Camera()
 
@@ -134,7 +150,10 @@ class GraphicsContext:
         self.ctx.enable_direct(0x809D)  # GL_MULTISAMPLE
 
         # Set the viewport
-        self.ctx.viewport = (0, 0, width, height)
+        if standalone:
+            self.ctx.viewport = (0, 0, width, height)
+        else:
+            self.ctx.viewport = (0, 0, self.framebuffer_width, self.framebuffer_height)
 
         # Create the font renderer
         self.font_renderer = FontRenderer(self.ctx)
@@ -270,7 +289,7 @@ void main() {
 
         # Set resolution uniform
         u_resolution = cast(moderngl.Uniform, self.program["u_resolution"])
-        u_resolution.value = (float(width), float(height))
+        u_resolution.value = (float(self.width), float(self.height))
 
         # Set camera uniforms
         u_camera_pos = cast(moderngl.Uniform, self.program["u_camera_pos"])
@@ -440,23 +459,28 @@ void main() {
     def on_resize(self, width: int, height: int):
         """Handle window resize based on resize_mode"""
 
+        logical_width, logical_height = glfw.get_window_size(self.window)
+        framebuffer_width, framebuffer_height = width, height
+
         if self.resize_mode == "ignore":
+            self.current_width = logical_width
+            self.current_height = logical_height
             return
 
         if self.resize_mode == "letterbox":
             original_aspect = self.original_width / self.original_height
-            new_aspect = width / height
+            new_aspect = framebuffer_width / framebuffer_height
 
             if new_aspect > original_aspect:
-                viewport_height = height
-                viewport_width = int(height * original_aspect)
-                viewport_x = (width - viewport_width) // 2
+                viewport_height = framebuffer_height
+                viewport_width = int(framebuffer_height * original_aspect)
+                viewport_x = (framebuffer_width - viewport_width) // 2
                 viewport_y = 0
             else:
-                viewport_width = width
-                viewport_height = int(width / original_aspect)
+                viewport_width = framebuffer_width
+                viewport_height = int(framebuffer_width / original_aspect)
                 viewport_x = 0
-                viewport_y = (height - viewport_height) // 2
+                viewport_y = (framebuffer_height - viewport_height) // 2
 
             self.ctx.viewport = (
                 viewport_x,
@@ -465,16 +489,25 @@ void main() {
                 viewport_height,
             )
 
+            self.current_width = logical_width
+            self.current_height = logical_height
+            self.framebuffer_width = framebuffer_width
+            self.framebuffer_height = framebuffer_height
+
         else:  # "stretch" mode (default)
-            self.width = width
-            self.height = height
-            self.ctx.viewport = (0, 0, width, height)
-            self.update_shader_uniforms(width, height)
+            self.width = logical_width
+            self.height = logical_height
+            self.framebuffer_width = framebuffer_width
+            self.framebuffer_height = framebuffer_height
+            self.ctx.viewport = (0, 0, framebuffer_width, framebuffer_height)
+            self.update_shader_uniforms(logical_width, logical_height)
 
         if self.fbo:
             self.fbo.release()
             self.fbo = self.ctx.framebuffer(
-                color_attachments=[self.ctx.texture((width, height), 4)]
+                color_attachments=[
+                    self.ctx.texture((framebuffer_width, framebuffer_height), 4)
+                ]
             )
 
     def on_key(self, key, scancode, action, mods):
@@ -486,55 +519,50 @@ void main() {
         """Handle mouse button events"""
         # Make sure the mouse is actually inside the window
         xpos, ypos = glfw.get_cursor_pos(self.window)
-        if self.window and self.resize_mode == "letterbox":
-            viewport = self.ctx.viewport
-            if not (
-                viewport[0] <= xpos <= viewport[0] + viewport[2]
-                and viewport[1] <= ypos <= viewport[1] + viewport[3]
-            ):
-                return
+        xpos = int(xpos)
+        ypos = int(ypos)
 
         if self.resize_mode == "letterbox":
-            viewport = self.ctx.viewport
+            scale = min(
+                self.current_width / self.width, self.current_height / self.height
+            )
+            rendered_w = self.width * scale
+            rendered_h = self.height * scale
+            offset_x = (self.current_width - rendered_w) / 2
+            offset_y = (self.current_height - rendered_h) / 2
+            xpos = int((xpos - offset_x) / scale)
+            ypos = int((ypos - offset_y) / scale)
 
-            # Adjust for aspect ratio difference
-            original_aspect = self.original_width / self.original_height
-            current_aspect = viewport[2] / viewport[3]
-            if current_aspect > original_aspect:
-                scale = viewport[3] / self.original_height
-            else:
-                scale = viewport[2] / self.original_width
+        elif self.resize_mode == "ignore":
+            ypos = ypos - (self.current_height - self.height)
 
-            xpos = int((xpos - viewport[0]) / scale)
-            ypos = int((ypos - viewport[1]) / scale)
+        if not (0 <= xpos < self.width and 0 <= ypos < self.height):
+            return
 
         if self.mouse_button_callback and callable(self.mouse_button_callback):
             self.mouse_button_callback(button, xpos, ypos, action, mods)
 
-    def on_mouse_move(self, xpos: int, ypos: int):
+    def on_mouse_move(self, xpos: float, ypos: float):
         """Handle mouse movement events"""
-        # Make sure the mouse is actually inside the window
-        if self.window and self.resize_mode == "letterbox":
-            viewport = self.ctx.viewport
-            if not (
-                viewport[0] <= xpos <= viewport[0] + viewport[2]
-                and viewport[1] <= ypos <= viewport[1] + viewport[3]
-            ):
-                return
+        xpos = int(xpos)
+        ypos = int(ypos)
 
         if self.resize_mode == "letterbox":
-            viewport = self.ctx.viewport
+            scale = min(
+                self.current_width / self.width, self.current_height / self.height
+            )
+            rendered_w = self.width * scale
+            rendered_h = self.height * scale
+            offset_x = (self.current_width - rendered_w) / 2
+            offset_y = (self.current_height - rendered_h) / 2
+            xpos = int((xpos - offset_x) / scale)
+            ypos = int((ypos - offset_y) / scale)
 
-            # Adjust for aspect ratio difference
-            original_aspect = self.original_width / self.original_height
-            current_aspect = viewport[2] / viewport[3]
-            if current_aspect > original_aspect:
-                scale = viewport[3] / self.original_height
-            else:
-                scale = viewport[2] / self.original_width
+        elif self.resize_mode == "ignore":
+            ypos = ypos - (self.current_height - self.height)
 
-            xpos = int((xpos - viewport[0]) / scale)
-            ypos = int((ypos - viewport[1]) / scale)
+        if not (0 <= xpos < self.width and 0 <= ypos < self.height):
+            return
 
         if self.mouse_move_callback and callable(self.mouse_move_callback):
             self.mouse_move_callback(xpos, ypos)
@@ -543,13 +571,25 @@ void main() {
         """Handle scroll events"""
         # Make sure the mouse is actually inside the window
         xpos, ypos = glfw.get_cursor_pos(self.window)
-        if self.window and self.resize_mode == "letterbox":
-            viewport = self.ctx.viewport
-            if not (
-                viewport[0] <= xpos <= viewport[0] + viewport[2]
-                and viewport[1] <= ypos <= viewport[1] + viewport[3]
-            ):
-                return
+        xpos = int(xpos)
+        ypos = int(ypos)
+
+        if self.resize_mode == "letterbox":
+            scale = min(
+                self.current_width / self.width, self.current_height / self.height
+            )
+            rendered_w = self.width * scale
+            rendered_h = self.height * scale
+            offset_x = (self.current_width - rendered_w) / 2
+            offset_y = (self.current_height - rendered_h) / 2
+            xpos = int((xpos - offset_x) / scale)
+            ypos = int((ypos - offset_y) / scale)
+
+        elif self.resize_mode == "ignore":
+            ypos = ypos - (self.current_height - self.height)
+
+        if not (0 <= xpos < self.width and 0 <= ypos < self.height):
+            return
 
         if self.scroll_callback and callable(self.scroll_callback):
             self.scroll_callback(xoffset, yoffset, xpos, ypos)
