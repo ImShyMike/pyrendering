@@ -2,7 +2,7 @@
 
 Python game building/rendering framework
 
-![Demo](./assets/demo.png)
+![Demo](https://raw.githubusercontent.com/ImShyMike/pyrendering/refs/heads/main/assets/demo.png)
 
 ---
 
@@ -16,12 +16,11 @@ pip install pyrendering
 
 ## Examples
 
-Examples can be found in the [examples directory](./pyrendering/src/examples) and cover most of the framework's features.
+Examples can be found in the [examples directory](https://github.com/ImShyMike/pyrendering/tree/main/pyrendering/src/examples) and cover most of the framework's features.
 
 ## Video demo
 
-![Video demo mp4](./assets/demo_video.mp4)
-![Video demo gif](./assets/demo_video.gif)
+![Video demo gif](https://raw.githubusercontent.com/ImShyMike/pyrendering/refs/heads/main/assets/demo_video.gif)
 
 ## License
 
