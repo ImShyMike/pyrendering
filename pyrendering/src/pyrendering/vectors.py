@@ -24,6 +24,10 @@ class Vec2:
     def y(self) -> float:
         return self.data[1]
 
+    @staticmethod
+    def zero() -> "Vec2":
+        return Vec2(0.0, 0.0)
+
     def __add__(self, other: "Vec2") -> "Vec2":
         return Vec2(*(self.data + other.data))
 
@@ -86,6 +90,10 @@ class Vec3:
     @property
     def z(self) -> float:
         return self.data[2]
+
+    @staticmethod
+    def zero() -> "Vec3":
+        return Vec3(0.0, 0.0, 0.0)
 
     def __add__(self, other: "Vec3") -> "Vec3":
         return Vec3(*(self.data + other.data))

@@ -1,6 +1,6 @@
 [project]
 name = "pyrendering"
-version = "0.1.5"
+version = "0.1.6"
 description = "Python game building/rendering framework"
 readme = "README.md"
 authors = [
