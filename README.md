@@ -10,8 +10,16 @@ Python game building/rendering framework
 
 The framework is published on [PyPI](https://pypi.org/project/pyrendering) under the name `pyrendering`.
 
+You can add it to your project using `pip`
+
 ```bash
 pip install pyrendering
+```
+
+Or using [uv](https://docs.astral.sh/uv)
+
+```bash
+uv add pyrendering
 ```
 
 ## Examples
